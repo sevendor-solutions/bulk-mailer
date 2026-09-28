@@ -12,7 +12,9 @@ COPY . .
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
 
-RUN npm run build
+# Increase memory limit and use vite directly (skips heavy tsc to prevent OOM/cancels)
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+RUN npx vite build
 
 # Stage 2: Serve via Nginx
 FROM nginx:alpine
