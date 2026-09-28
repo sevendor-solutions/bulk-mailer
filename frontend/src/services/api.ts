@@ -6,8 +6,11 @@ const getApiBase = () => {
   if (import.meta.env.VITE_API_URL) {
     return `${import.meta.env.VITE_API_URL}/api`;
   }
-  if (typeof window !== 'undefined' && window.location.hostname.includes('200.97.162.130')) {
-    return `${window.location.protocol}//bulk-api.200.97.162.130.sslip.io/api`;
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host.includes('200-97-162-130') || host.includes('200.97.162.130') || host.includes('sslip.io')) {
+      return `${window.location.protocol}//bulkmailer-backend-z9iqeh-d78262-200-97-162-130.sslip.io/api`;
+    }
   }
   return '/api';
 };
@@ -35,7 +38,7 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
       try {
-        const response = await axios.post('/api/auth/refresh', {}, { withCredentials: true });
+        const response = await axios.post(`${getApiBase()}/auth/refresh`, {}, { withCredentials: true });
         const { access_token } = response.data;
         useAuthStore.getState().setToken(access_token);
         originalRequest.headers.Authorization = `Bearer ${access_token}`;
