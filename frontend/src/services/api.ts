@@ -2,10 +2,18 @@ import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
 import type { PreviewRecipientResponse, PreviewRenderResponse, MergeFieldDefinition, TemplateFieldBinding } from '../types';
 
-const apiBase = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api';
+const getApiBase = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return `${import.meta.env.VITE_API_URL}/api`;
+  }
+  if (typeof window !== 'undefined' && window.location.hostname.includes('200.97.162.130')) {
+    return `${window.location.protocol}//bulk-api.200.97.162.130.sslip.io/api`;
+  }
+  return '/api';
+};
 
 const api = axios.create({
-  baseURL: apiBase,
+  baseURL: getApiBase(),
   withCredentials: true,
 });
 
