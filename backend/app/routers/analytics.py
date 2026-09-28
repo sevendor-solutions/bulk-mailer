@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, case, cast, String, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database import get_db, engine
 from app.models.user import User
 from app.models.campaign import Campaign, Recipient
 from app.models.tracking import TrackingEvent
@@ -18,6 +18,14 @@ from app.routers.campaigns import _get_campaign, _get_campaign_mode
 import json
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
+
+
+def _date_bucket(col, granularity: str):
+    if engine.dialect.name == "postgresql":
+        pg_fmt = "YYYY-MM-DD HH24:00" if granularity == "hour" else "YYYY-MM-DD"
+        return func.to_char(col, pg_fmt)
+    sqlite_fmt = "%Y-%m-%d %H:00" if granularity == "hour" else "%Y-%m-%d"
+    return func.strftime(sqlite_fmt, col)
 
 
 def _parse_range(from_s: Optional[str], to_s: Optional[str], default_days: int = 30):
@@ -156,8 +164,9 @@ async def analytics_timeseries(
 
     async def series(event_type: Optional[str] = None, use_sent: bool = False):
         if use_sent:
+            b_expr = _date_bucket(Recipient.sent_at, granularity)
             q = select(
-                func.strftime(fmt, Recipient.sent_at),
+                b_expr,
                 func.count(Recipient.id),
             ).where(
                 Recipient.sent_at.isnot(None),
@@ -166,10 +175,11 @@ async def analytics_timeseries(
             )
             if campaign_id:
                 q = q.where(Recipient.campaign_id == campaign_id)
-            q = q.group_by(func.strftime(fmt, Recipient.sent_at)).order_by(func.strftime(fmt, Recipient.sent_at))
+            q = q.group_by(b_expr).order_by(b_expr)
         else:
+            b_expr = _date_bucket(TrackingEvent.created_at, granularity)
             q = select(
-                func.strftime(fmt, TrackingEvent.created_at),
+                b_expr,
                 func.count(TrackingEvent.id),
             ).where(
                 TrackingEvent.created_at >= start,
@@ -178,7 +188,7 @@ async def analytics_timeseries(
             )
             if campaign_id:
                 q = q.where(TrackingEvent.campaign_id == campaign_id)
-            q = q.group_by(func.strftime(fmt, TrackingEvent.created_at)).order_by(func.strftime(fmt, TrackingEvent.created_at))
+            q = q.group_by(b_expr).order_by(b_expr)
         rows = (await db.execute(q)).all()
         return [{"bucket": r[0], "count": int(r[1])} for r in rows if r[0]]
 
@@ -266,17 +276,17 @@ async def campaign_events_timeseries(
     current_user: User = Depends(get_current_user),
 ):
     campaign = await _get_campaign(campaign_code, current_user, db)
-    fmt = "%Y-%m-%d %H:00" if granularity == "hour" else "%Y-%m-%d"
+    bucket_expr = _date_bucket(TrackingEvent.created_at, granularity)
 
     async def series(event_type: str):
         q = (
-            select(func.strftime(fmt, TrackingEvent.created_at), func.count(TrackingEvent.id))
+            select(bucket_expr, func.count(TrackingEvent.id))
             .where(
                 TrackingEvent.campaign_id == campaign.id,
                 TrackingEvent.event_type == event_type,
             )
-            .group_by(func.strftime(fmt, TrackingEvent.created_at))
-            .order_by(func.strftime(fmt, TrackingEvent.created_at))
+            .group_by(bucket_expr)
+            .order_by(bucket_expr)
         )
         return [{"bucket": r[0], "count": int(r[1])} for r in (await db.execute(q)).all() if r[0]]
 
@@ -290,17 +300,21 @@ async def campaign_links(
     current_user: User = Depends(get_current_user),
 ):
     campaign = await _get_campaign(campaign_code, current_user, db)
-    # SQLite JSON extract
+    if engine.dialect.name == "postgresql":
+        url_expr = TrackingEvent.metadata_json["url"].as_string()
+    else:
+        url_expr = func.json_extract(TrackingEvent.metadata_json, "$.url")
+
     q = await db.execute(
         select(
-            func.json_extract(TrackingEvent.metadata_json, "$.url"),
+            url_expr,
             func.count(TrackingEvent.id),
         )
         .where(
             TrackingEvent.campaign_id == campaign.id,
             TrackingEvent.event_type == "click",
         )
-        .group_by(func.json_extract(TrackingEvent.metadata_json, "$.url"))
+        .group_by(url_expr)
         .order_by(func.count(TrackingEvent.id).desc())
         .limit(50)
     )

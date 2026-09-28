@@ -10,24 +10,33 @@ import random
 logger = logging.getLogger(__name__)
 
 
-# Ensure data directory exists
-os.makedirs(os.path.dirname(settings.DATABASE_URL.replace("sqlite+aiosqlite:///", "")), exist_ok=True)
+is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+
+# Ensure data directory exists if SQLite
+if is_sqlite:
+    db_path = settings.DATABASE_URL.replace("sqlite+aiosqlite:///", "")
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+connect_args = {"check_same_thread": False} if is_sqlite else {}
 
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
-    connect_args={"check_same_thread": False},
+    connect_args=connect_args,
 )
 
 
-@event.listens_for(engine.sync_engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA busy_timeout=5000")
-    cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
-    cursor.close()
+if is_sqlite:
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+        cursor.close()
 
 
 AsyncSessionLocal = async_sessionmaker(
@@ -56,7 +65,10 @@ async def init_db():
             sender_identity, asset, composer,
         )
         await conn.run_sync(Base.metadata.create_all)
-    await _run_migrations()
+    if engine.dialect.name == "sqlite":
+        await _run_migrations()
+    else:
+        await _backfill_data()
 
 
 def _random_code(prefix: str) -> str:
@@ -200,14 +212,16 @@ async def _seed_builtin_themes(db):
             text(
                 "INSERT INTO composer_themes "
                 "(public_code, name, description, tokens_json, is_builtin, is_org_default, is_locked) "
-                "VALUES (:code, :name, :description, :tokens, 1, :is_default, 0)"
+                "VALUES (:code, :name, :description, :tokens, :is_builtin, :is_default, :is_locked)"
             ),
             {
                 "code": theme["code"],
                 "name": theme["name"],
                 "description": theme["description"],
                 "tokens": json.dumps(theme["tokens"]),
-                "is_default": 1 if index == 0 and not existing else 0,
+                "is_builtin": True,
+                "is_default": bool(index == 0 and not existing),
+                "is_locked": False,
             },
         )
         inserted += 1
@@ -293,7 +307,7 @@ async def _backfill_data():
             """), {"cid": cid})
 
         # Ensure is_included is set
-        await db.execute(text("UPDATE recipients SET is_included = 1 WHERE is_included IS NULL"))
+        await db.execute(text("UPDATE recipients SET is_included = :val WHERE is_included IS NULL"), {"val": True})
 
         # Public codes
         await _backfill_public_codes(db, "campaigns", "CMP")
@@ -309,7 +323,7 @@ async def _backfill_data():
         await _backfill_public_codes(db, "campaign_template_snapshots", "SNP")
 
         await db.execute(text("UPDATE assets SET usage_count = 0 WHERE usage_count IS NULL"))
-        await db.execute(text("UPDATE assets SET is_shared = 1 WHERE is_shared IS NULL"))
+        await db.execute(text("UPDATE assets SET is_shared = :val WHERE is_shared IS NULL"), {"val": True})
 
         await _seed_builtin_themes(db)
 
