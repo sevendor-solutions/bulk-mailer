@@ -10,11 +10,17 @@ import random
 logger = logging.getLogger(__name__)
 
 
-is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+db_url = settings.DATABASE_URL
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
+    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+is_sqlite = db_url.startswith("sqlite")
 
 # Ensure data directory exists if SQLite
 if is_sqlite:
-    db_path = settings.DATABASE_URL.replace("sqlite+aiosqlite:///", "")
+    db_path = db_url.replace("sqlite+aiosqlite:///", "")
     db_dir = os.path.dirname(db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
@@ -22,7 +28,7 @@ if is_sqlite:
 connect_args = {"check_same_thread": False} if is_sqlite else {}
 
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    db_url,
     echo=settings.DEBUG,
     connect_args=connect_args,
 )
