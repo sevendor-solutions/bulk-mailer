@@ -1,12 +1,19 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     # App
     APP_NAME: str = "Bulk Email Sender"
     DEBUG: bool = False
     SECRET_KEY: str = "change-this-to-a-secure-random-string"
+    PORT: int = 8000
     
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/bulk_email.db"
@@ -59,6 +66,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 settings = Settings()
