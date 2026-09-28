@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bulk_mailer_db
+    restart: always
+    environment:
+      POSTGRES_DB: bulk_email
+      POSTGRES_USER: bulk_user
+      POSTGRES_PASSWORD: bulk_password_secure123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bulk_user -d bulk_email"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bulk_mailer_backend
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - APP_NAME=Bulk Email Sender
+      - DEBUG=False
+      - SECRET_KEY=change-this-to-a-secure-random-secret-key-12345
+      - JWT_SECRET_KEY=change-this-jwt-secret-key-67890
+      - DATABASE_URL=postgresql+asyncpg://bulk_user:bulk_password_secure123@postgres:5432/bulk_email
+      - EMAIL_PROVIDER=smtp
+      - CORS_ORIGINS=["*"]
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_data:/app/data
+    expose:
+      - "8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bulk_mailer_frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  postgres_data:
+  backend_uploads:
+  backend_data:
