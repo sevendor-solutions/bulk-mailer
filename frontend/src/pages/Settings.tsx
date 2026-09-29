@@ -57,6 +57,8 @@ export default function Settings() {
   const [smtpUseTls, setSmtpUseTls] = useState(true);
   const [sandboxMode, setSandboxMode] = useState(true);
   const [maxSendRate, setMaxSendRate] = useState(14);
+  const [rateLimitType, setRateLimitType] = useState<'delay' | 'per_second'>('delay');
+  const [sendDelaySeconds, setSendDelaySeconds] = useState(60);
   const [saving, setSaving] = useState(false);
   const [trackingBaseUrl, setTrackingBaseUrl] = useState('');
   const [providerInfo, setProviderInfo] = useState({
@@ -157,6 +159,8 @@ export default function Settings() {
     setSmtpUsername(config.smtp_username || '');
     setSmtpUseTls(config.smtp_use_tls ?? true);
     setSandboxMode(config.sandbox_mode ?? true);
+    setRateLimitType(config.rate_limit_type || 'delay');
+    setSendDelaySeconds(config.send_delay_seconds ?? 60);
     setMaxSendRate(config.max_send_rate || 14);
     setTrackingBaseUrl(config.tracking_base_url || '');
     setProviderInfo({
@@ -219,6 +223,7 @@ export default function Settings() {
         smtp_host: smtpHost.trim(), smtp_port: smtpPort,
         smtp_username: smtpUsername.trim(), smtp_password: smtpPassword || undefined,
         smtp_use_tls: smtpUseTls, sandbox_mode: sandboxMode, max_send_rate: maxSendRate,
+        rate_limit_type: rateLimitType, send_delay_seconds: sendDelaySeconds,
         tracking_base_url: trackingBaseUrl.trim() || undefined,
         imap_enabled: imapEnabled, imap_host: imapHost.trim(), imap_port: imapPort,
         imap_username: imapUsername.trim(), imap_password: imapPassword || undefined,
@@ -290,8 +295,14 @@ export default function Settings() {
 
   const handleSaveIdentity = async () => {
     try {
-      if (editingIdentity) { await api.patch(`/sender-identities/${editingIdentity.public_code}`, identityForm); toast.success('Identity updated'); }
-      else { await api.post('/sender-identities/', identityForm); toast.success('Identity created'); }
+      const payload = {
+        ...identityForm,
+        from_email: identityForm.from_email.trim(),
+        from_name: identityForm.from_name.trim(),
+        reply_to: identityForm.reply_to.trim() || identityForm.from_email.trim(),
+      };
+      if (editingIdentity) { await api.patch(`/sender-identities/${editingIdentity.public_code}`, payload); toast.success('Identity updated'); }
+      else { await api.post('/sender-identities/', payload); toast.success('Identity created'); }
       setShowIdentityForm(false); setEditingIdentity(null);
       setIdentityForm({ from_email: '', from_name: '', reply_to: '', is_default: false });
       loadIdentities();
@@ -563,8 +574,16 @@ export default function Settings() {
                         <input value={identityForm.from_name} onChange={e => setIdentityForm({ ...identityForm, from_name: e.target.value })} className="input-field !py-2 text-sm" placeholder="Company Name" />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-gray-600 mb-1">Reply-To</label>
-                        <input type="email" value={identityForm.reply_to} onChange={e => setIdentityForm({ ...identityForm, reply_to: e.target.value })} className="input-field !py-2 text-sm" placeholder="support@company.com" />
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Reply-To <span className="text-gray-400 font-normal">(Optional — defaults to From Email)</span>
+                        </label>
+                        <input
+                          type="email"
+                          value={identityForm.reply_to}
+                          onChange={e => setIdentityForm({ ...identityForm, reply_to: e.target.value })}
+                          className="input-field !py-2 text-sm"
+                          placeholder={identityForm.from_email || "support@company.com"}
+                        />
                       </div>
                       <div className="flex items-end pb-1">
                         <label className="flex items-center gap-2 cursor-pointer">
@@ -1035,16 +1054,105 @@ export default function Settings() {
               </p>
             </div>
 
-            {/* Rate Limit */}
+            {/* Rate Limiting & Sending Speed */}
             <div className="card-static p-5">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center"><Gauge size={16} className="text-white" /></div>
-                <div><h3 className="font-semibold text-sm">Rate Limiting</h3><p className="text-xs text-gray-500">Control email sending speed</p></div>
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center">
+                  <Gauge size={16} className="text-white" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm">Rate Limiting & Sending Speed</h3>
+                  <p className="text-xs text-gray-500">Control delays between sent emails or throughput limit</p>
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Max Emails Per Second</label>
-                <input type="number" value={maxSendRate} onChange={e => setMaxSendRate(Number(e.target.value))} className="input-field w-36" min={1} max={100} />
-                <p className="text-xs text-gray-500 mt-2">SES default limit is 14/sec. System auto-detects and uses the lower value.</p>
+
+              {/* Mode Selection */}
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-gray-800">
+                    <input
+                      type="radio"
+                      name="rateLimitType"
+                      checked={rateLimitType === 'delay'}
+                      onChange={() => setRateLimitType('delay')}
+                      className="w-4 h-4 text-brand-600 focus:ring-brand-500"
+                    />
+                    <span>Delay between emails (Recommended for SMTP)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-gray-800">
+                    <input
+                      type="radio"
+                      name="rateLimitType"
+                      checked={rateLimitType === 'per_second'}
+                      onChange={() => setRateLimitType('per_second')}
+                      className="w-4 h-4 text-brand-600 focus:ring-brand-500"
+                    />
+                    <span>Emails per second (SES / High throughput)</span>
+                  </label>
+                </div>
+
+                {rateLimitType === 'delay' ? (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Send 1 email every:
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={sendDelaySeconds}
+                        onChange={e => setSendDelaySeconds(Math.max(1, Number(e.target.value)))}
+                        className="input-field w-32 font-bold text-gray-900"
+                        min={1}
+                        max={3600}
+                      />
+                      <span className="text-sm font-medium text-gray-600">seconds</span>
+                    </div>
+
+                    {/* Presets */}
+                    <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                      <span className="text-xs text-gray-400">Quick presets:</span>
+                      {[
+                        { label: '30 seconds', val: 30 },
+                        { label: '60 seconds (1 min)', val: 60 },
+                        { label: '80 seconds', val: 80 },
+                        { label: '120 seconds (2 min)', val: 120 },
+                      ].map(p => (
+                        <button
+                          key={p.val}
+                          type="button"
+                          onClick={() => setSendDelaySeconds(p.val)}
+                          className={`px-2.5 py-1 text-xs rounded-lg border transition ${
+                            sendDelaySeconds === p.val
+                              ? 'bg-brand-50 border-brand-500 text-brand-700 font-semibold'
+                              : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 mt-3">
+                      ⚡ <strong>Sending Pace:</strong> 1 email every {sendDelaySeconds} seconds (~{Math.round((3600 / sendDelaySeconds) * 10) / 10} emails/hour). Spaced sending protects your sender reputation and prevents SMTP account suspension.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">Max Emails Per Second</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={maxSendRate}
+                        onChange={e => setMaxSendRate(Number(e.target.value))}
+                        className="input-field w-32 font-bold text-gray-900"
+                        min={1}
+                        max={100}
+                      />
+                      <span className="text-sm font-medium text-gray-600">emails/sec</span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">SES default limit is 14/sec. System auto-detects and uses the lower value.</p>
+                  </div>
+                )}
               </div>
             </div>
 

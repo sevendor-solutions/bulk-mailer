@@ -33,20 +33,24 @@ async def start_queue_worker():
     except Exception as e:
         logger.error(f"Could not recover interrupted sends: {e}")
 
-    # Try to get SES quota for auto rate detection
+    # Initialize rate limiter based on configured mode (delay vs per_second)
     try:
         sender = get_email_sender()
-        if hasattr(sender, "get_send_quota"):
+        if hasattr(sender, "get_send_quota") and getattr(settings, "RATE_LIMIT_TYPE", "delay") == "per_second":
             quota = await sender.get_send_quota()
             auto_rate = min(quota["max_send_rate"], settings.MAX_SEND_RATE)
-            rate_limiter.update_rate(auto_rate)
+            rate_limiter.update_config(mode="per_second", rate=auto_rate)
             logger.info(f"Rate limit set to {auto_rate}/sec (SES: {quota['max_send_rate']}, config: {settings.MAX_SEND_RATE})")
             await sender.close()
         else:
-            rate_limiter.update_rate(settings.MAX_SEND_RATE)
-            logger.info(f"Rate limit set to {settings.MAX_SEND_RATE}/sec ({settings.EMAIL_PROVIDER})")
+            rate_limiter.update_config(
+                mode=getattr(settings, "RATE_LIMIT_TYPE", "delay"),
+                delay_seconds=getattr(settings, "SEND_DELAY_SECONDS", 60.0),
+                rate=getattr(settings, "MAX_SEND_RATE", 14),
+            )
+            logger.info(f"Rate limiter configured: mode={rate_limiter.mode}, delay={rate_limiter.delay_seconds}s, rate={rate_limiter.rate}/s")
     except Exception as e:
-        logger.warning(f"Could not fetch SES quota: {e}")
+        logger.warning(f"Could not configure rate limiter: {e}")
 
     while not _shutdown_event.is_set():
         try:
@@ -240,8 +244,15 @@ async def _send_batch(db, campaign, recipients, sender, snapshot, snapshot_attac
         if campaign.status != "sending":
             return
 
-        # Rate limit
-        await rate_limiter.acquire()
+        # Rate limit (respects delay or tokens/sec)
+        acquired = await rate_limiter.acquire(is_cancelled=lambda: _shutdown_event.is_set())
+        if not acquired or _shutdown_event.is_set():
+            return
+
+        # Re-check status in case user paused during the delay
+        await db.refresh(campaign)
+        if campaign.status != "sending":
+            return
 
         # Mark as sending
         recipient.status = "sending"

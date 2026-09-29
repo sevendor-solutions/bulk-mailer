@@ -48,11 +48,13 @@ async def create_sender_identity(
     if data.is_default:
         await _clear_defaults(db)
 
+    reply_to = (data.reply_to or "").strip() or data.from_email
+
     identity = SenderIdentity(
         public_code=await generate_unique_public_code(db, SenderIdentity, PREFIXES["sender"]),
-        from_email=data.from_email,
-        from_name=data.from_name,
-        reply_to=data.reply_to,
+        from_email=data.from_email.strip(),
+        from_name=data.from_name.strip(),
+        reply_to=reply_to,
         is_default=data.is_default,
     )
     db.add(identity)
@@ -79,6 +81,9 @@ async def update_sender_identity(
     # If setting as default, clear existing defaults
     if update_data.get("is_default"):
         await _clear_defaults(db)
+
+    if "reply_to" in update_data and not (update_data["reply_to"] or "").strip():
+        update_data["reply_to"] = update_data.get("from_email") or identity.from_email
 
     for field, value in update_data.items():
         setattr(identity, field, value)

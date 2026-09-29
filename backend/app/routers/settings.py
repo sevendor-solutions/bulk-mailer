@@ -32,6 +32,8 @@ class EmailProviderConfig(BaseModel):
     smtp_use_tls: Optional[bool] = True
     sandbox_mode: Optional[bool] = True
     max_send_rate: Optional[int] = None
+    rate_limit_type: Optional[str] = "delay"  # "delay" or "per_second"
+    send_delay_seconds: Optional[float] = 60.0  # seconds between emails
     # Mailbox read for bounces; blank values follow the SMTP settings
     imap_enabled: Optional[bool] = None
     imap_host: Optional[str] = None
@@ -65,6 +67,9 @@ def _provider_view(config: dict) -> dict:
     view["tracking_active"] = tracking_active()
     view["tracking_url_is_public"] = tracking_url_is_public()
     view["problem"] = provider_problem()
+    view.setdefault("rate_limit_type", getattr(app_settings, "RATE_LIMIT_TYPE", "delay"))
+    view.setdefault("send_delay_seconds", getattr(app_settings, "SEND_DELAY_SECONDS", 60.0))
+    view.setdefault("max_send_rate", getattr(app_settings, "MAX_SEND_RATE", 14))
     return view
 
 
@@ -148,6 +153,8 @@ async def configure_email_provider(
         raise HTTPException(400, "Provider must be 'ses' or 'smtp'")
     if config.max_send_rate is not None and config.max_send_rate < 1:
         raise HTTPException(400, "Max send rate must be at least 1 per second")
+    if config.send_delay_seconds is not None and config.send_delay_seconds < 0:
+        raise HTTPException(400, "Send delay must be 0 or greater")
 
     # Merge onto what is stored: a blank password or key means "keep the current one",
     # and saving one provider must not wipe the other's settings.

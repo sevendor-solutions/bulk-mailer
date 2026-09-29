@@ -49,6 +49,8 @@ export default function CampaignWizard() {
   const [selectedIdentityId, setSelectedIdentityId] = useState<number | null>(null);
   const [customFromName, setCustomFromName] = useState('');
   const [useCustomName, setUseCustomName] = useState(false);
+  const [customReplyTo, setCustomReplyTo] = useState('');
+  const [useCustomReplyTo, setUseCustomReplyTo] = useState(false);
   const [loadingIdentities, setLoadingIdentities] = useState(true);
 
   // Step 2: Upload
@@ -85,6 +87,7 @@ export default function CampaignWizard() {
         if (c.preheader) setPreheader(c.preheader);
         if (c.sender_identity_id) setSelectedIdentityId(c.sender_identity_id);
         if (c.from_name) { setCustomFromName(c.from_name); setUseCustomName(true); }
+        if (c.reply_to) { setCustomReplyTo(c.reply_to); setUseCustomReplyTo(true); }
         if (c.html_body) setHtmlBody(c.html_body);
         if (c.theme_config) setThemeConfig(c.theme_config);
         if (c.merge_fields_config) setMergeFields(c.merge_fields_config);
@@ -172,11 +175,14 @@ export default function CampaignWizard() {
     }
     setLoading(true);
     try {
+      const defaultReplyTo = (selectedIdentity.reply_to || selectedIdentity.from_email || '').trim();
+      const finalReplyTo = useCustomReplyTo && customReplyTo.trim() ? customReplyTo.trim() : defaultReplyTo;
+
       const payload = {
         name, subject, preheader: preheader || undefined,
         from_email: selectedIdentity.from_email,
         from_name: useCustomName ? customFromName : selectedIdentity.from_name,
-        reply_to: selectedIdentity.reply_to || undefined,
+        reply_to: finalReplyTo || undefined,
         sender_identity_id: selectedIdentity.id,
       };
 
@@ -515,7 +521,7 @@ export default function CampaignWizard() {
                       <option value="" disabled>Select a sender identity...</option>
                       {senderIdentities.map(id => (
                         <option key={id.id} value={id.id}>
-                          {id.from_name} &lt;{id.from_email}&gt;{id.reply_to ? ` (reply-to: ${id.reply_to})` : ''}{id.is_default ? ' ★' : ''}
+                          {id.from_name} &lt;{id.from_email}&gt; · Reply: {id.reply_to || id.from_email}{id.is_default ? ' ★' : ''}
                         </option>
                       ))}
                     </select>
@@ -533,6 +539,25 @@ export default function CampaignWizard() {
                     {useCustomName && (
                       <input value={customFromName} onChange={(e) => setCustomFromName(e.target.value)}
                         className="input-field" placeholder={`Default: ${selectedIdentity.from_name}`} />
+                    )}
+                  </div>
+                )}
+
+                {/* Custom Reply-To */}
+                {selectedIdentity && (
+                  <div className="sm:col-span-2">
+                    <label className="flex items-center gap-2.5 cursor-pointer mb-2">
+                      <input type="checkbox" checked={useCustomReplyTo} onChange={(e) => setUseCustomReplyTo(e.target.checked)}
+                        className="w-4 h-4 text-brand-600 rounded border-gray-300 focus:ring-brand-500" />
+                      <span className="text-sm text-gray-600">Use a custom "Reply-To" email for this campaign</span>
+                    </label>
+                    {useCustomReplyTo ? (
+                      <input type="email" value={customReplyTo} onChange={(e) => setCustomReplyTo(e.target.value)}
+                        className="input-field" placeholder={`Default: ${selectedIdentity.reply_to || selectedIdentity.from_email}`} />
+                    ) : (
+                      <p className="text-xs text-gray-500 ml-6">
+                        Replies will be sent to: <span className="font-semibold text-gray-700">{selectedIdentity.reply_to || selectedIdentity.from_email}</span>
+                      </p>
                     )}
                   </div>
                 )}

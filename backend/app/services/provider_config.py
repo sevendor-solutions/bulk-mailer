@@ -91,10 +91,25 @@ def apply_provider_config(config: dict) -> None:
     if "tracking_enabled" in config:
         settings.TRACKING_ENABLED = config.get("tracking_enabled")
 
+    if config.get("rate_limit_type"):
+        settings.RATE_LIMIT_TYPE = str(config["rate_limit_type"])
+    if "send_delay_seconds" in config and config["send_delay_seconds"] is not None:
+        try:
+            settings.SEND_DELAY_SECONDS = float(config["send_delay_seconds"])
+        except (ValueError, TypeError):
+            pass
     if config.get("max_send_rate"):
-        settings.MAX_SEND_RATE = int(config["max_send_rate"])
-        from app.services.queue_worker import rate_limiter
-        rate_limiter.update_rate(settings.MAX_SEND_RATE)
+        try:
+            settings.MAX_SEND_RATE = int(config["max_send_rate"])
+        except (ValueError, TypeError):
+            pass
+
+    from app.services.queue_worker import rate_limiter
+    rate_limiter.update_config(
+        mode=settings.RATE_LIMIT_TYPE,
+        delay_seconds=settings.SEND_DELAY_SECONDS,
+        rate=settings.MAX_SEND_RATE,
+    )
 
 
 async def load_provider_config(db) -> dict:

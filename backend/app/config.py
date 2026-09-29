@@ -49,7 +49,9 @@ class Settings(BaseSettings):
     EMAIL_PROVIDER: str = "ses"
     
     # Rate Limiting
-    MAX_SEND_RATE: int = 14  # emails per second
+    MAX_SEND_RATE: int = 14  # emails per second (when rate_limit_type == "per_second")
+    SEND_DELAY_SECONDS: float = 60.0  # seconds between emails (when rate_limit_type == "delay", e.g. 60s, 80s)
+    RATE_LIMIT_TYPE: str = "delay"  # "delay" (seconds between emails) or "per_second" (emails/sec)
     
     # Upload
     UPLOAD_DIR: str = "./uploads"
