@@ -3,8 +3,8 @@ import { motion } from 'framer-motion';
 import api from '../services/api';
 import type { Template, EditorType, ThemeConfig, MergeFieldDefinition } from '../types';
 import toast from 'react-hot-toast';
-import { Plus, Trash2, FileText, Edit, ArrowLeft, Save, Loader2, Sparkles, PenSquare } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Plus, Trash2, FileText, Edit, ArrowLeft, Save, Loader2 } from 'lucide-react';
+
 import EditorSelector from '../components/EditorSelector';
 import ConfirmDialog from '../components/ConfirmDialog';
 import MergeFieldManager, { type MergeFieldDef } from '../components/MergeFieldManager';
@@ -51,7 +51,6 @@ function fromCanonicalDefs(defs: MergeFieldDefinition[] | null | undefined): Mer
  * opened from the "New Composer" button or a card's composer icon.
  */
 export default function Templates() {
-  const navigate = useNavigate();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');
@@ -83,11 +82,7 @@ export default function Templates() {
   };
 
   const openCreate = () => { resetForm(); setView('create'); };
-  const openNewComposer = () => {
-    // A one-shot flag, not navigation state: see ComposerHome for why.
-    try { sessionStorage.setItem('composer:auto-create-template', '1'); } catch { /* private browsing */ }
-    navigate('/composer');
-  };
+
   const openEdit = (t: Template) => {
     setEditCode(t.public_code); setName(t.name); setDescription(t.description || '');
     setEditorType(t.editor_type as EditorType); setHtmlBody(t.html_output || '');
@@ -229,12 +224,7 @@ export default function Templates() {
         title="Email Templates"
         subtitle={loading ? 'Loading…' : `${templates.length} template${templates.length !== 1 ? 's' : ''}`}
         actions={
-          <>
-            <button type="button" onClick={openNewComposer} className="btn-secondary">
-              <Sparkles size={16} /> New Composer
-            </button>
-            <button type="button" onClick={openCreate} className="btn-primary"><Plus size={16} /> New Template</button>
-          </>
+          <button type="button" onClick={openCreate} className="btn-primary"><Plus size={16} /> New Template</button>
         }
       />
 
@@ -250,18 +240,13 @@ export default function Templates() {
         </div>
       ) : templates.length === 0 ? (
         <EmptyState
-          icon={Sparkles}
+          icon={FileText}
           title="No templates yet"
-          description="Create reusable email templates for your campaigns — with the classic editor or the new composer"
+          description="Create reusable email templates for your campaigns."
           iconTone="bg-gradient-to-br from-accent-100 to-pink-100"
           iconColor="text-accent-500"
           action={
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={openCreate} className="btn-primary"><Plus size={16} /> Create Template</button>
-              <button type="button" onClick={openNewComposer} className="btn-secondary">
-                <Sparkles size={16} /> Try the Composer
-              </button>
-            </div>
+            <button type="button" onClick={openCreate} className="btn-primary"><Plus size={16} /> Create Template</button>
           }
         />
       ) : (
@@ -279,13 +264,7 @@ export default function Templates() {
                     <p className="text-xs text-gray-500 mt-0.5 truncate">{template.description || 'No description'}</p>
                   </div>
                   <div className="flex gap-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                    <IconButton
-                      icon={PenSquare}
-                      label={`Open ${template.name} in the new composer`}
-                      size="sm"
-                      onClick={() => navigate(`/composer/template/${template.public_code}`)}
-                    />
-                    <IconButton icon={Edit} label={`Edit ${template.name} in the classic editor`} tone="brand" size="sm" onClick={() => openEdit(template)} />
+                    <IconButton icon={Edit} label={`Edit ${template.name}`} tone="brand" size="sm" onClick={() => openEdit(template)} />
                     <IconButton icon={Trash2} label={`Delete ${template.name}`} tone="danger" size="sm" onClick={() => setDeleteTemplateCode(template.public_code)} />
                   </div>
                 </div>

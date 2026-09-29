@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../services/api';
@@ -7,6 +7,7 @@ import FileUpload from '../components/FileUpload';
 import ColumnMapper from '../components/ColumnMapper';
 import MergeFieldManager from '../components/MergeFieldManager';
 import type { MergeFieldDef } from '../components/MergeFieldManager';
+import EditorSelector from '../components/EditorSelector';
 import PreviewPane from '../editors/PreviewPane';
 import WizardShell from '../components/WizardShell';
 import WizardActionBar from '../components/WizardActionBar';
@@ -15,10 +16,14 @@ import type {
   ColumnMapping, ThemeConfig, UploadResponse, UploadStatus,
   SenderIdentity,
   CampaignListItem,
+  MergeFieldDefinition,
+  Template,
+  EditorType,
 } from '../types';
 import {
-  ArrowLeft, ArrowRight, Clock, Check, Sparkles, ShieldCheck,
-  AlertCircle, Loader2, Rocket, CalendarClock, Upload, Users, Search, PanelsTopLeft
+  ArrowLeft, ArrowRight, Clock, Check,
+  AlertCircle, Loader2, Rocket, CalendarClock, Upload, Users, Search,
+  PanelsTopLeft, PenLine, LayoutTemplate, Save, FileText, Plus
 } from 'lucide-react';
 
 const STEPS = ['Details', 'Recipients', 'Map Columns', 'Compose', 'Review & Send'];
@@ -62,11 +67,18 @@ export default function CampaignWizard() {
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>({ email_column: '' });
   const [mergeFields, setMergeFields] = useState<MergeFieldDef[]>([]);
 
-  // Step 4: Compose — content itself is designed and published in the composer;
-  // this wizard only tracks whether published content exists yet.
+  // Step 4: Compose — inline compose or select from templates
   const [htmlBody, setHtmlBody] = useState('');
   const [themeConfig, setThemeConfig] = useState<ThemeConfig | null>(null);
   const [contentStatus, setContentStatus] = useState<'published' | 'draft' | null>(null);
+  const [editorType, setEditorType] = useState<EditorType>('custom');
+  const [contentJson, setContentJson] = useState('');
+  const [composeTab, setComposeTab] = useState<'compose' | 'template'>('compose');
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [templateSearch, setTemplateSearch] = useState('');
+  const [savingContent, setSavingContent] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
 
   // Step 5: Schedule
   const [scheduleAt, setScheduleAt] = useState('');
@@ -88,16 +100,27 @@ export default function CampaignWizard() {
         if (c.sender_identity_id) setSelectedIdentityId(c.sender_identity_id);
         if (c.from_name) { setCustomFromName(c.from_name); setUseCustomName(true); }
         if (c.reply_to) { setCustomReplyTo(c.reply_to); setUseCustomReplyTo(true); }
-        if (c.html_body) setHtmlBody(c.html_body);
+        if (c.html_body) {
+          setHtmlBody(c.html_body);
+          setContentStatus('published');
+        }
         if (c.theme_config) setThemeConfig(c.theme_config);
         if (c.merge_fields_config) setMergeFields(c.merge_fields_config);
+        if (c.editor_type) setEditorType(c.editor_type as EditorType);
+        if (c.content_json) setContentJson(c.content_json);
+        if (c.selected_template_id) setSelectedTemplateId(c.selected_template_id);
 
-        // Whether the composer content behind this campaign has been published —
-        // sending needs published content, a saved draft alone isn't enough.
         try {
           const target = await api.get(`/composer/targets/campaign/${code}`);
-          setContentStatus(target.data?.status === 'published' ? 'published' : 'draft');
-        } catch { setContentStatus(null); }
+          if (target.data?.status === 'published' || c.html_body) {
+            setContentStatus('published');
+          } else {
+            setContentStatus('draft');
+          }
+        } catch {
+          if (c.html_body) setContentStatus('published');
+          else setContentStatus(null);
+        }
 
         let recipientsOk = (c.total_recipients || 0) > 0;
         try {
@@ -155,6 +178,119 @@ export default function CampaignWizard() {
     setStep(s);
     setHighestStepReached(h => Math.max(h, s));
   };
+
+  const campaignMergeFields: MergeFieldDefinition[] = useMemo(() => {
+    const list: MergeFieldDefinition[] = [
+      { key: 'email', label: 'Email', data_type: 'email', required: true, is_system: true, source_kind: 'system', default_value: null, source_column: null },
+      { key: 'first_name', label: 'First Name', data_type: 'text', required: false, is_system: true, source_kind: 'system', default_value: null, source_column: null },
+      { key: 'last_name', label: 'Last Name', data_type: 'text', required: false, is_system: true, source_kind: 'system', default_value: null, source_column: null },
+      { key: 'name', label: 'Full Name', data_type: 'text', required: false, is_system: true, source_kind: 'system', default_value: null, source_column: null },
+    ];
+    if (mergeFields?.length) {
+      mergeFields.forEach(f => {
+        if (!list.some(item => item.key === f.name)) {
+          list.push({
+            key: f.name,
+            label: f.label || f.name,
+            data_type: 'text',
+            required: false,
+            default_value: f.defaultValue || null,
+            source_kind: f.source === 'csv' ? 'uploaded_column' : 'custom',
+            source_column: f.source === 'csv' ? f.name : null,
+            is_system: false,
+          });
+        }
+      });
+    }
+    return list;
+  }, [mergeFields]);
+
+  const loadTemplates = async () => {
+    setLoadingTemplates(true);
+    try {
+      const res = await api.get('/templates/');
+      setTemplates(res.data);
+    } catch {
+      toast.error('Failed to load templates');
+    } finally {
+      setLoadingTemplates(false);
+    }
+  };
+
+  useEffect(() => {
+    if (step === 3 && templates.length === 0) {
+      loadTemplates();
+    }
+  }, [step, templates.length]);
+
+  const handleSelectTemplate = async (template: Template) => {
+    const html = template.html_output || '';
+    setHtmlBody(html);
+    if (template.theme_config) {
+      try {
+        setThemeConfig(JSON.parse(template.theme_config));
+      } catch { /* ignore */ }
+    }
+    setSelectedTemplateId(template.id || null);
+    if (template.editor_type) {
+      setEditorType(template.editor_type as EditorType);
+    }
+    if (template.content_json) {
+      setContentJson(template.content_json);
+    }
+
+    if (campaignCode) {
+      setSavingContent(true);
+      try {
+        await api.patch(`/campaigns/${campaignCode}`, {
+          html_body: html,
+          selected_template_id: template.id,
+          editor_type: template.editor_type || 'custom',
+          content_json: template.content_json || undefined,
+          theme_config: template.theme_config ? JSON.parse(template.theme_config) : undefined,
+        });
+        setContentStatus('published');
+        toast.success(`Template "${template.name}" applied!`);
+        setComposeTab('compose');
+      } catch (err: any) {
+        toast.error(err.response?.data?.detail || 'Failed to apply template to campaign');
+      } finally {
+        setSavingContent(false);
+      }
+    } else {
+      setContentStatus('published');
+      setComposeTab('compose');
+    }
+  };
+
+  const handleSaveContent = async (silent = false) => {
+    if (!campaignCode) return;
+    try {
+      if (!silent) setSavingContent(true);
+      await api.patch(`/campaigns/${campaignCode}`, {
+        html_body: htmlBody,
+        subject,
+        preheader: preheader || undefined,
+        editor_type: editorType,
+        content_json: contentJson || undefined,
+        theme_config: themeConfig || undefined,
+        selected_template_id: selectedTemplateId || undefined,
+      });
+      setContentStatus('published');
+      if (!silent) toast.success('Email draft saved!');
+    } catch (err: any) {
+      if (!silent) toast.error(err.response?.data?.detail || 'Failed to save email');
+    } finally {
+      if (!silent) setSavingContent(false);
+    }
+  };
+
+  const filteredTemplates = templates.filter(t => {
+    if (!templateSearch.trim()) return true;
+    const q = templateSearch.toLowerCase();
+    return (t.name && t.name.toLowerCase().includes(q)) ||
+           (t.description && t.description.toLowerCase().includes(q));
+  });
 
   const loadSenderIdentities = async () => {
     setLoadingIdentities(true);
@@ -349,7 +485,19 @@ export default function CampaignWizard() {
               </button>
             }
             right={
-              <button type="button" onClick={() => goStep(4)} disabled={!htmlBody} className="btn-primary">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!htmlBody || !htmlBody.trim()) {
+                    toast.error('Please compose an email or select a template first');
+                    return;
+                  }
+                  await handleSaveContent(true);
+                  goStep(4);
+                }}
+                disabled={!htmlBody || !htmlBody.trim() || savingContent}
+                className="btn-primary"
+              >
                 Review & Send <ArrowRight size={16} />
               </button>
             }
@@ -642,56 +790,263 @@ export default function CampaignWizard() {
             </div>
           )}
 
-          {/* Step 3: Compose — design happens in the composer, a separate full-screen workspace */}
+          {/* Step 3: Compose — compose directly or select from template */}
           {step === 3 && campaignCode && (
             <div className="space-y-6">
-              <div>
-                <h2 className="section-title">Compose the email</h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Design the email in the composer: blocks or HTML, merge fields from your uploaded columns, live
-                  preview per recipient, validation and test sends.
-                </p>
-              </div>
-
-              <div className="card-static p-8 flex flex-col items-center text-center gap-4">
-                <div className="w-16 h-16 bg-gradient-to-br from-brand-100 to-accent-100 rounded-2xl flex items-center justify-center">
-                  <Sparkles size={28} className="text-brand-600" />
-                </div>
+              {/* Header with Tab Switcher */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-gray-200 pb-4">
                 <div>
-                  <p className="font-display font-semibold text-gray-900">
-                    {htmlBody ? 'Continue composing' : 'Open the composer to start'}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1.5 max-w-sm">
-                    {contentStatus === 'draft'
-                      ? 'A draft is saved but not published yet — publish it in the composer so it can be sent.'
-                      : 'Content is designed and published there; this wizard picks it up automatically when you come back.'}
+                  <h2 className="section-title">Compose your email</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    Compose directly here in the editor, or pick from your saved templates.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => navigate(`/composer/campaign/${campaignCode}`)}
-                  className="btn-primary"
-                >
-                  <PanelsTopLeft size={16} /> {htmlBody ? 'Open composer' : 'Start composing'}
-                </button>
-                {contentStatus === 'draft' && (
-                  <p className="flex items-center gap-1.5 text-xs text-amber-600">
-                    <AlertCircle size={13} /> Unpublished draft — open the composer and publish before sending
-                  </p>
-                )}
+                <div className="inline-flex rounded-xl bg-gray-100 p-1 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => setComposeTab('compose')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      composeTab === 'compose'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    <PenLine size={16} /> Compose here
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setComposeTab('template');
+                      if (templates.length === 0) loadTemplates();
+                    }}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      composeTab === 'template'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    <LayoutTemplate size={16} /> Select from template
+                  </button>
+                </div>
               </div>
 
-              {htmlBody && (
-                <div className="card-static overflow-hidden">
-                  <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
-                      <ShieldCheck size={14} className="text-emerald-500" /> Published content
-                    </h3>
-                    <span className="text-xs text-gray-500">Subject: {subject || '—'}</span>
+              {composeTab === 'compose' ? (
+                <div className="space-y-4">
+                  {/* Status & Quick Actions Bar */}
+                  <div className="flex items-center justify-between flex-wrap gap-2 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                        htmlBody && htmlBody.trim() ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {htmlBody && htmlBody.trim() ? <Check size={12} /> : <AlertCircle size={12} />}
+                        {htmlBody && htmlBody.trim() ? 'Content Ready' : 'Empty Email Content'}
+                      </span>
+                      {selectedTemplateId && (
+                        <span className="text-xs text-gray-500 hidden sm:inline">
+                          Template loaded
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setComposeTab('template');
+                          if (templates.length === 0) loadTemplates();
+                        }}
+                        className="btn-secondary text-xs py-1.5"
+                      >
+                        <LayoutTemplate size={14} /> Choose Template
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveContent(false)}
+                        disabled={savingContent}
+                        className="btn-secondary text-xs py-1.5"
+                      >
+                        {savingContent ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        Save Draft
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/composer/campaign/${campaignCode}`)}
+                        className="text-xs text-gray-500 hover:text-brand-600 flex items-center gap-1 px-2 py-1 transition-colors"
+                        title="Open advanced visual block builder"
+                      >
+                        <PanelsTopLeft size={13} /> Visual Builder ↗
+                      </button>
+                    </div>
                   </div>
-                  <div className="p-4">
-                    <PreviewPane html={htmlBody} themeConfig={themeConfig} />
+
+                  {/* Inline Editor Workspace */}
+                  <div className="flex flex-col min-h-[560px] h-[72vh] max-h-[920px] rounded-xl border border-gray-200 overflow-hidden shadow-sm bg-white">
+                    <div className="flex-1 min-h-0">
+                      <EditorSelector
+                        editorType={editorType}
+                        onEditorTypeChange={setEditorType}
+                        htmlBody={htmlBody}
+                        onHtmlChange={(html) => {
+                          setHtmlBody(html);
+                          if (html && !contentStatus) setContentStatus('published');
+                        }}
+                        contentJson={contentJson}
+                        onContentJsonChange={setContentJson}
+                        mergeFields={mergeFields.map(f => ({ name: f.name, label: f.label }))}
+                        themeConfig={themeConfig}
+                        editorContext="campaign"
+                        subject={subject}
+                        onSubjectChange={setSubject}
+                        preheader={preheader}
+                        onPreheaderChange={setPreheader}
+                        senderIdentity={selectedIdentity}
+                        totalRecipients={includedCount}
+                        campaignMergeFields={campaignMergeFields}
+                        onThemeChange={setThemeConfig}
+                        onSave={() => handleSaveContent(false)}
+                        sidePanel={
+                          <div className="flex flex-col h-full min-h-0">
+                            <div className="px-3 py-2 border-b border-gray-100 text-xs font-semibold text-gray-600 flex items-center justify-between">
+                              <span>Live Preview</span>
+                              <span className="text-[11px] text-gray-400 truncate max-w-[140px]">
+                                {subject ? `Subject: ${subject}` : 'No subject'}
+                              </span>
+                            </div>
+                            <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                              <PreviewPane html={htmlBody} themeConfig={themeConfig} />
+                            </div>
+                          </div>
+                        }
+                      />
+                    </div>
                   </div>
+                </div>
+              ) : (
+                /* Select from Template Gallery */
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-3">
+                    <div className="relative flex-1 max-w-md">
+                      <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="text"
+                        value={templateSearch}
+                        onChange={e => setTemplateSearch(e.target.value)}
+                        placeholder="Search templates..."
+                        className="input-field pl-9 py-2 text-sm"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setComposeTab('compose')}
+                        className="btn-secondary text-xs"
+                      >
+                        <ArrowLeft size={14} /> Back to Editor
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/templates')}
+                        className="btn-secondary text-xs"
+                      >
+                        <Plus size={14} /> Manage Templates
+                      </button>
+                    </div>
+                  </div>
+
+                  {loadingTemplates ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {[1, 2, 3].map(i => (
+                        <div key={i} className="card-static p-4 space-y-3">
+                          <div className="skeleton h-36 rounded-lg" />
+                          <div className="skeleton h-4 w-32" />
+                          <div className="skeleton h-3 w-48" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : filteredTemplates.length === 0 ? (
+                    <div className="card-static p-8 text-center flex flex-col items-center gap-3">
+                      <FileText size={32} className="text-gray-300" />
+                      <h3 className="font-semibold text-gray-800">
+                        {templates.length === 0 ? 'No templates created yet' : 'No templates match your search'}
+                      </h3>
+                      <p className="text-xs text-gray-500 max-w-sm">
+                        {templates.length === 0
+                          ? 'You can compose your email directly here in the editor, or create reusable templates on the Templates page.'
+                          : 'Try searching with a different keyword.'}
+                      </p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => setComposeTab('compose')}
+                          className="btn-primary"
+                        >
+                          <PenLine size={16} /> Compose here
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate('/templates')}
+                          className="btn-secondary"
+                        >
+                          <Plus size={16} /> Create Template
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {filteredTemplates.map(t => {
+                        const isCurrent = (selectedTemplateId === t.id) || (htmlBody && t.html_output === htmlBody);
+                        return (
+                          <div
+                            key={t.public_code}
+                            className={`card group p-4 flex flex-col justify-between transition-all ${
+                              isCurrent ? 'ring-2 ring-brand-500 bg-brand-50/10' : ''
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-start justify-between gap-2 mb-2">
+                                <h4 className="font-semibold text-gray-900 group-hover:text-brand-600 transition-colors truncate">
+                                  {t.name}
+                                </h4>
+                                <span className="badge-gray capitalize text-[10px] shrink-0">{t.editor_type}</span>
+                              </div>
+                              <p className="text-xs text-gray-500 line-clamp-2 mb-3 min-h-[32px]">
+                                {t.description || 'No description provided'}
+                              </p>
+                              <div className="border border-gray-100 rounded-lg overflow-hidden h-40 bg-gray-50 mb-3">
+                                {t.html_output ? (
+                                  <iframe
+                                    srcDoc={t.html_output}
+                                    className="w-full h-full border-0 pointer-events-none transform scale-90 origin-top"
+                                    title={`${t.name} preview`}
+                                    sandbox=""
+                                  />
+                                ) : (
+                                  <div className="h-full flex items-center justify-center text-gray-300">
+                                    <FileText size={24} />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
+                              <span className="text-[11px] text-gray-400 font-mono">{t.public_code}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleSelectTemplate(t)}
+                                className={isCurrent ? 'btn-success text-xs py-1.5' : 'btn-primary text-xs py-1.5'}
+                              >
+                                {isCurrent ? (
+                                  <>
+                                    <Check size={14} /> Selected
+                                  </>
+                                ) : (
+                                  'Use This Template'
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -718,8 +1073,8 @@ export default function CampaignWizard() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Content</span>
-                    <span className={contentStatus === 'published' ? 'badge-success' : 'badge-warning'}>
-                      {contentStatus === 'published' ? 'Published' : 'Draft'}
+                    <span className={htmlBody && htmlBody.trim() ? 'badge-success' : 'badge-warning'}>
+                      {htmlBody && htmlBody.trim() ? 'Ready to Send' : 'Empty'}
                     </span>
                   </div>
                 </div>
