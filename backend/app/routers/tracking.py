@@ -1,12 +1,15 @@
+import logging
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func, or_
 from urllib.parse import unquote
 from app.database import get_db, AsyncSessionLocal
 from app.models.campaign import Recipient, Campaign
 from app.models.tracking import TrackingEvent
 from app.models.suppression import SuppressionList
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tracking"])
 
@@ -21,89 +24,115 @@ PIXEL_GIF = bytes([
 
 
 @router.get("/track/open/{recipient_id}")
-async def track_open(recipient_id: int, request: Request):
+async def track_open(recipient_id: str, request: Request):
     """Track email open via tracking pixel."""
-    # Fire and forget - don't block the response
-    async with AsyncSessionLocal() as db:
-        # Verify recipient exists
-        result = await db.execute(select(Recipient).where(Recipient.id == recipient_id))
-        recipient = result.scalar_one_or_none()
-        if recipient:
-            # Look for an earlier open before adding this one: the query would
-            # otherwise flush the new event and always find it.
-            existing = await db.execute(
-                select(TrackingEvent.id).where(
-                    TrackingEvent.recipient_id == recipient_id,
-                    TrackingEvent.event_type == "open",
-                ).limit(1)
-            )
-            first_open = existing.first() is None
-
-            # Log tracking event
-            event = TrackingEvent(
-                recipient_id=recipient_id,
-                campaign_id=recipient.campaign_id,
-                event_type="open",
-                metadata_json={
-                    "user_agent": request.headers.get("user-agent"),
-                    "ip": request.client.host if request.client else None,
-                },
-            )
-            db.add(event)
-
-            # Update campaign stats (only increment once per recipient)
-            if first_open:
-                await db.execute(
-                    update(Campaign)
-                    .where(Campaign.id == recipient.campaign_id)
-                    .values(opened_count=Campaign.opened_count + 1)
+    try:
+        async with AsyncSessionLocal() as db:
+            # Identifier can be numeric ID or public_code string
+            if str(recipient_id).isdigit():
+                result = await db.execute(
+                    select(Recipient).where(or_(Recipient.id == int(recipient_id), Recipient.public_code == str(recipient_id)))
                 )
+            else:
+                result = await db.execute(
+                    select(Recipient).where(Recipient.public_code == str(recipient_id))
+                )
+            recipient = result.scalar_one_or_none()
+            if recipient:
+                # Check for earlier open to record first_open accurately
+                existing = await db.execute(
+                    select(TrackingEvent.id).where(
+                        TrackingEvent.recipient_id == recipient.id,
+                        TrackingEvent.event_type == "open",
+                    ).limit(1)
+                )
+                first_open = existing.first() is None
 
-            await db.commit()
+                # Log tracking event
+                event = TrackingEvent(
+                    recipient_id=recipient.id,
+                    campaign_id=recipient.campaign_id,
+                    event_type="open",
+                    metadata_json={
+                        "user_agent": request.headers.get("user-agent"),
+                        "ip": request.client.host if request.client else None,
+                    },
+                )
+                db.add(event)
 
-    return Response(content=PIXEL_GIF, media_type="image/gif")
+                # Update campaign stats (only increment once per recipient)
+                if first_open:
+                    await db.execute(
+                        update(Campaign)
+                        .where(Campaign.id == recipient.campaign_id)
+                        .values(opened_count=func.coalesce(Campaign.opened_count, 0) + 1)
+                    )
+
+                await db.commit()
+    except Exception as exc:
+        logger.error(f"Error recording open event for recipient {recipient_id}: {exc}")
+
+    return Response(
+        content=PIXEL_GIF,
+        media_type="image/gif",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0, proxy-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
 
 
 @router.get("/track/click/{recipient_id}")
-async def track_click(recipient_id: int, url: str, cid: int = None, request: Request = None):
+async def track_click(recipient_id: str, url: str, cid: int = None, request: Request = None):
     """Track link click and redirect to original URL."""
     original_url = unquote(url)
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Recipient).where(Recipient.id == recipient_id))
-        recipient = result.scalar_one_or_none()
-        if recipient:
-            # The recipient decides the campaign; cid in the link is not trusted
-            campaign_id = recipient.campaign_id
-            existing = await db.execute(
-                select(TrackingEvent.id).where(
-                    TrackingEvent.recipient_id == recipient_id,
-                    TrackingEvent.event_type == "click",
-                ).limit(1)
-            )
-            first_click = existing.first() is None
-
-            event = TrackingEvent(
-                recipient_id=recipient_id,
-                campaign_id=campaign_id,
-                event_type="click",
-                metadata_json={
-                    "url": original_url,
-                    "user_agent": request.headers.get("user-agent") if request else None,
-                    "ip": request.client.host if request and request.client else None,
-                },
-            )
-            db.add(event)
-
-            # Update campaign click count (first click per recipient)
-            if first_click:
-                await db.execute(
-                    update(Campaign)
-                    .where(Campaign.id == campaign_id)
-                    .values(clicked_count=Campaign.clicked_count + 1)
+    try:
+        async with AsyncSessionLocal() as db:
+            if str(recipient_id).isdigit():
+                result = await db.execute(
+                    select(Recipient).where(or_(Recipient.id == int(recipient_id), Recipient.public_code == str(recipient_id)))
                 )
+            else:
+                result = await db.execute(
+                    select(Recipient).where(Recipient.public_code == str(recipient_id))
+                )
+            recipient = result.scalar_one_or_none()
+            if recipient:
+                campaign_id = recipient.campaign_id
+                existing = await db.execute(
+                    select(TrackingEvent.id).where(
+                        TrackingEvent.recipient_id == recipient.id,
+                        TrackingEvent.event_type == "click",
+                    ).limit(1)
+                )
+                first_click = existing.first() is None
 
-            await db.commit()
+                event = TrackingEvent(
+                    recipient_id=recipient.id,
+                    campaign_id=campaign_id,
+                    event_type="click",
+                    metadata_json={
+                        "url": original_url,
+                        "user_agent": request.headers.get("user-agent") if request else None,
+                        "ip": request.client.host if request and request.client else None,
+                    },
+                )
+                db.add(event)
+
+                # Update campaign click count (first click per recipient)
+                if first_click:
+                    await db.execute(
+                        update(Campaign)
+                        .where(Campaign.id == campaign_id)
+                        .values(clicked_count=func.coalesce(Campaign.clicked_count, 0) + 1)
+                    )
+
+                await db.commit()
+    except Exception as exc:
+        logger.error(f"Error recording click event for recipient {recipient_id}: {exc}")
 
     return RedirectResponse(url=original_url, status_code=302)
 

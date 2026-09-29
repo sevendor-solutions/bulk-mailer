@@ -189,6 +189,38 @@ async def delete_campaign(
     campaign_id = campaign.id
     if campaign.status == "sending":
         raise HTTPException(400, "Cannot delete a campaign that is currently sending")
+
+    # 1. Nullify source_campaign_id references
+    await db.execute(update(Campaign).where(Campaign.source_campaign_id == campaign_id).values(source_campaign_id=None))
+    await db.execute(update(ImportMappingProfile).where(ImportMappingProfile.source_campaign_id == campaign_id).values(source_campaign_id=None))
+
+    # 2. Delete tracking events
+    from app.models.tracking import TrackingEvent
+    await db.execute(delete(TrackingEvent).where(TrackingEvent.campaign_id == campaign_id))
+
+    # 3. Delete recipients
+    await db.execute(delete(Recipient).where(Recipient.campaign_id == campaign_id))
+
+    # 4. Delete upload jobs
+    await db.execute(delete(UploadJob).where(UploadJob.campaign_id == campaign_id))
+
+    # 5. Delete attachments
+    from app.models.campaign import CampaignAttachment
+    await db.execute(delete(CampaignAttachment).where(CampaignAttachment.campaign_id == campaign_id))
+
+    # 6. Delete template snapshots and composer revisions
+    try:
+        from app.models.composer import CampaignTemplateSnapshot, TemplateRevision, ValidationReportRecord
+        await db.execute(delete(CampaignTemplateSnapshot).where(CampaignTemplateSnapshot.campaign_id == campaign_id))
+        rev_result = await db.execute(select(TemplateRevision.id).where(TemplateRevision.campaign_id == campaign_id))
+        rev_ids = [r[0] for r in rev_result.fetchall()]
+        if rev_ids:
+            await db.execute(delete(ValidationReportRecord).where(ValidationReportRecord.revision_id.in_(rev_ids)))
+            await db.execute(delete(TemplateRevision).where(TemplateRevision.id.in_(rev_ids)))
+    except Exception:
+        pass
+
+    # 7. Delete the campaign
     await db.delete(campaign)
     await db.commit()
 

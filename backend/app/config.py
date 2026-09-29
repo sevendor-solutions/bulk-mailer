@@ -1,3 +1,4 @@
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
@@ -58,7 +59,10 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 50
     
     # Tracking
-    TRACKING_BASE_URL: str = "http://localhost:8000"
+    TRACKING_BASE_URL: str = os.getenv(
+        "TRACKING_BASE_URL",
+        "http://bulkmailer-backend-z9iqeh-d78262-200-97-162-130.sslip.io"
+    )
     # None = automatic: track only when TRACKING_BASE_URL is publicly reachable
     TRACKING_ENABLED: Optional[bool] = None
     

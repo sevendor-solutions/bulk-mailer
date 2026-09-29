@@ -121,9 +121,24 @@ async def load_provider_config(db) -> dict:
     return config
 
 
+DOKPLOY_PUBLIC_BACKEND = "http://bulkmailer-backend-z9iqeh-d78262-200-97-162-130.sslip.io"
+
+
+def get_effective_tracking_url() -> str:
+    """Get the usable tracking URL, falling back to Dokploy public backend if localhost or empty."""
+    url = (settings.TRACKING_BASE_URL or "").strip().rstrip("/")
+    if not url:
+        return DOKPLOY_PUBLIC_BACKEND
+    host = (urlparse(url).hostname or "").lower()
+    if host in _LOCAL_HOSTS:
+        return DOKPLOY_PUBLIC_BACKEND
+    return url
+
+
 def tracking_url_is_public() -> bool:
-    """False while the tracking URL still points at this machine."""
-    host = (urlparse(settings.TRACKING_BASE_URL or "").hostname or "").lower()
+    """Check if the tracking URL or its effective fallback is public."""
+    effective = get_effective_tracking_url()
+    host = (urlparse(effective).hostname or "").lower()
     return host not in _LOCAL_HOSTS
 
 
@@ -131,12 +146,13 @@ def tracking_active() -> bool:
     """
     Whether to rewrite links and add the open pixel.
 
-    Left on automatic, tracking is skipped while the tracking URL is local:
-    links rewritten to localhost are dead for every real recipient.
+    Returns True whenever an effective public tracking URL is available, or if explicitly enabled.
     """
-    if settings.TRACKING_ENABLED is None:
-        return tracking_url_is_public()
-    return bool(settings.TRACKING_ENABLED)
+    if settings.TRACKING_ENABLED is False:
+        return False
+    if settings.TRACKING_ENABLED is True:
+        return True
+    return tracking_url_is_public()
 
 
 def provider_problem() -> Optional[str]:

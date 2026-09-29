@@ -93,7 +93,28 @@ app.add_middleware(
 )
 
 # What a recipient's mail app may need from this server
-RECIPIENT_PATHS = ("/track/", "/unsubscribe/", "/uploads/")
+RECIPIENT_PATHS = ("/track/", "/api/track/", "/unsubscribe/", "/api/unsubscribe/", "/uploads/")
+
+
+@app.middleware("http")
+async def detect_public_host(request, call_next):
+    """
+    Auto-detect the public host from incoming traffic (e.g. Dokploy reverse proxy)
+    if TRACKING_BASE_URL is localhost or not yet configured.
+    """
+    try:
+        from urllib.parse import urlparse
+        current_host = (urlparse(settings.TRACKING_BASE_URL or "").hostname or "").lower()
+        if not settings.TRACKING_BASE_URL or current_host in ("localhost", "127.0.0.1", "0.0.0.0", "::1", ""):
+            incoming_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").strip()
+            raw_host = incoming_host.split(":")[0].strip().lower()
+            if raw_host and raw_host not in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+                proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
+                detected_url = f"{proto}://{incoming_host}".rstrip("/")
+                settings.TRACKING_BASE_URL = detected_url
+    except Exception:
+        pass
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -125,7 +146,8 @@ app.include_router(assets.router, prefix="/api")
 app.include_router(analytics.router, prefix="/api")
 app.include_router(composer.router, prefix="/api")
 app.include_router(composer_library.router, prefix="/api")
-app.include_router(tracking.router)  # No prefix - short tracking URLs
+app.include_router(tracking.router)  # Short tracking URLs: /track/open/...
+app.include_router(tracking.router, prefix="/api")  # API tracking URLs: /api/track/open/...
 app.include_router(webhooks.router, prefix="/api")
 app.include_router(ws.router)  # WebSocket - no prefix
 
