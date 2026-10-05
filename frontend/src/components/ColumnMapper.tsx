@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { ColumnMapping } from '../types';
 
 interface Props {
@@ -7,6 +8,38 @@ interface Props {
 }
 
 export default function ColumnMapper({ columns, mapping, onChange }: Props) {
+  useEffect(() => {
+    let changed = false;
+    let newEmail = mapping.email_column;
+    let newName = mapping.name_column;
+
+    if (!newEmail && columns.length > 0) {
+      const found = columns.find(c => {
+        const l = c.trim().toLowerCase();
+        return l === 'email' || l === 'e-mail' || l === 'email address' || l === 'email_address';
+      }) || columns.find(c => c.trim().toLowerCase().includes('email'));
+      if (found) {
+        newEmail = found;
+        changed = true;
+      }
+    }
+
+    if (!newName && columns.length > 0) {
+      const found = columns.find(c => {
+        const l = c.trim().toLowerCase();
+        return l === 'name' || l === 'full name' || l === 'fullname' || l === 'first name' || l === 'firstname' || l === 'contact name';
+      }) || columns.find(c => c.trim().toLowerCase().includes('name'));
+      if (found) {
+        newName = found;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      onChange({ ...mapping, email_column: newEmail, name_column: newName });
+    }
+  }, [columns]);
+
   const updateMapping = (updates: Partial<ColumnMapping>) => {
     onChange({ ...mapping, ...updates });
   };

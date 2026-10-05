@@ -233,6 +233,26 @@ export default function CampaignWizard() {
 
   const handleUploadComplete = (result: UploadResponse) => {
     setUploadResult(result);
+    const cols = result.columns || [];
+    const emailCol = cols.find(c => {
+      const l = c.trim().toLowerCase();
+      return l === 'email' || l === 'e-mail' || l === 'email address' || l === 'email_address';
+    }) || cols.find(c => c.trim().toLowerCase().includes('email')) || '';
+
+    const nameCol = cols.find(c => {
+      const l = c.trim().toLowerCase();
+      return l === 'name' || l === 'full name' || l === 'fullname' || l === 'first name' || l === 'firstname' || l === 'contact name';
+    }) || cols.find(c => c.trim().toLowerCase().includes('name'));
+
+    setColumnMapping({
+      email_column: emailCol,
+      name_column: nameCol || undefined,
+    });
+
+    if (nameCol && !mergeFields.some(f => f.name === 'name')) {
+      setMergeFields(prev => [...prev, { name: 'name', label: nameCol, defaultValue: '', source: 'csv' }]);
+    }
+
     goStep(2);
   };
 

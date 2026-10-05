@@ -401,10 +401,20 @@ async def list_recipients(
     items = []
     for r in rows:
         merge = r.merge_data or {}
+        name_val = (
+            merge.get("name")
+            or merge.get("Name")
+            or merge.get("full_name")
+            or merge.get("FullName")
+            or merge.get("first_name")
+            or merge.get("FirstName")
+            or merge.get("contact_name")
+            or ""
+        )
         items.append({
             "public_code": r.public_code,
             "email": r.email,
-            "name": merge.get("name") or merge.get("full_name") or "",
+            "name": name_val,
             "merge_data": merge,
             "is_included": bool(r.is_included),
             "status": r.status,
@@ -923,12 +933,33 @@ async def process_upload(job_id: int, campaign_id: int, mapping: ColumnMappingRe
             used_codes.add(code)
             return code
 
+        def _get_row_field(row_dict: dict, col_name: str | None) -> str:
+            if not col_name:
+                return ""
+            if col_name in row_dict and row_dict[col_name] is not None:
+                val = str(row_dict[col_name]).strip()
+                if val:
+                    return val
+            target = col_name.strip().lower()
+            for k, v in row_dict.items():
+                if k and str(k).strip().lower() == target:
+                    return str(v).strip() if v is not None else ""
+            return ""
+
         parser = parse_csv_rows if ext == "csv" else parse_excel_rows
         for batch in parser(content, batch_size=500):
             recipients_to_add = []
             for row in batch:
                 processed += 1
-                email_value = row.get(mapping.email_column, "").strip().lower()
+                email_value = _get_row_field(row, mapping.email_column).lower()
+                if not email_value:
+                    for k, v in row.items():
+                        clean_k = str(k).strip().lower().replace(" ", "_").replace("-", "_")
+                        if clean_k in ("email", "e_mail", "email_address", "recipient_email", "mail"):
+                            candidate = str(v).strip().lower() if v else ""
+                            if candidate and validate_email_address(candidate):
+                                email_value = candidate
+                                break
 
                 if not email_value or not validate_email_address(email_value):
                     invalid += 1
@@ -945,13 +976,34 @@ async def process_upload(job_id: int, campaign_id: int, mapping: ColumnMappingRe
 
                 seen_emails.add(email_value)
 
+                # Extract name with case/whitespace-insensitivity and standard fallback
+                name_val = _get_row_field(row, mapping.name_column) if mapping.name_column else ""
+                if not name_val:
+                    for k, v in row.items():
+                        clean_k = str(k).strip().lower().replace(" ", "_").replace("-", "_")
+                        if clean_k in ("name", "full_name", "fullname", "first_name", "firstname", "recipient_name", "contact_name", "customer_name", "client_name"):
+                            candidate = str(v).strip() if v is not None else ""
+                            if candidate:
+                                name_val = candidate
+                                break
+
                 merge_data = {}
-                if mapping.name_column:
-                    merge_data["name"] = row.get(mapping.name_column, "")
+                # Include all normalized columns from row so any variable in templates works
+                for k, v in row.items():
+                    if k:
+                        norm_key = normalize_field_key(str(k))
+                        merge_data[norm_key] = str(v).strip() if v is not None else ""
+
+                if name_val:
+                    merge_data["name"] = name_val
+
                 if mapping.merge_fields:
                     for var_name, col_name in mapping.merge_fields.items():
                         key = normalize_field_key(var_name) if var_name else normalize_field_key(col_name)
-                        merge_data[key] = row.get(col_name, "")
+                        val = _get_row_field(row, col_name)
+                        merge_data[key] = val
+                        if not merge_data.get("name") and key.lower() in ("name", "full_name", "first_name"):
+                            merge_data["name"] = val
 
                 recipients_to_add.append(Recipient(
                     public_code=next_code(),
@@ -1030,7 +1082,13 @@ async def get_preview_recipient(
             "display_index": index + 1,
             "total": total,
             "email": recipient.email,
-            "display_name": (recipient.merge_data or {}).get("name", ""),
+            "display_name": (
+                (recipient.merge_data or {}).get("name")
+                or (recipient.merge_data or {}).get("Name")
+                or (recipient.merge_data or {}).get("full_name")
+                or (recipient.merge_data or {}).get("first_name")
+                or ""
+            ),
             "variables": recipient.merge_data or {},
         },
         has_previous=index > 0,

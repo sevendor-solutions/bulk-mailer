@@ -241,7 +241,17 @@ export default function RecipientTable({
                     )}
                     <td className="px-3 py-2 font-mono text-[11px] text-gray-500 whitespace-nowrap">{row.public_code}</td>
                     <td className="px-3 py-2 text-gray-900">{row.email}</td>
-                    <td className="px-3 py-2 text-gray-600">{row.name || '—'}</td>
+                    <td className="px-3 py-2 text-gray-600">
+                      {row.name || (row.merge_data && (
+                        row.merge_data.name ||
+                        row.merge_data.Name ||
+                        row.merge_data.full_name ||
+                        row.merge_data.FullName ||
+                        row.merge_data.first_name ||
+                        row.merge_data.FirstName ||
+                        row.merge_data.contact_name
+                      )) || '—'}
+                    </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium capitalize ${STATUS_STYLE[row.status] || STATUS_STYLE.pending}`}>
                         {statusLabel(row)}
