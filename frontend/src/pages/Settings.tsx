@@ -1038,7 +1038,14 @@ export default function Settings() {
                 <div>
                   <h3 className="font-semibold text-sm">Open and click tracking</h3>
                   <p className="text-xs text-gray-500">
-                    {providerInfo.trackingActive ? 'On: links and opens are tracked' : 'Off: emails are sent with their original links'}
+                    {providerInfo.trackingActive ? (
+                      <span className="text-emerald-600 font-semibold inline-flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                        On: links and opens are tracked
+                      </span>
+                    ) : (
+                      <span>Off: emails are sent with their original links</span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -1050,7 +1057,7 @@ export default function Settings() {
               <p className="text-xs text-gray-500 mt-2">
                 Tracked links and the unsubscribe link point here, so recipients must be able to reach it from the
                 internet.
-                {!providerInfo.trackingUrlIsPublic && ' It is a local address now, so tracking and the unsubscribe link are left out to keep the links in your emails working.'}
+                {!providerInfo.trackingUrlIsPublic && ' Enter a public server URL or domain above to turn tracking ON.'}
               </p>
             </div>
 

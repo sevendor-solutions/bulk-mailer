@@ -59,8 +59,8 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 50
     
     # Tracking
-    TRACKING_BASE_URL: str = os.getenv("TRACKING_BASE_URL", "")
-    # None = automatic: track only when a non-wildcard public domain is configured
+    TRACKING_BASE_URL: str = os.getenv("TRACKING_BASE_URL", "https://bulkmailer-backend-z9iqeh-d78262-200-97-162-130.sslip.io")
+    # None = automatic: track when a public domain or server URL is configured
     TRACKING_ENABLED: Optional[bool] = None
     
     # CORS

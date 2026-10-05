@@ -121,36 +121,30 @@ async def load_provider_config(db) -> dict:
     return config
 
 
-_WILDCARD_SUFFIXES = ("sslip.io", "nip.io", "traefik.me")
+DOKPLOY_PUBLIC_BACKEND = "https://bulkmailer-backend-z9iqeh-d78262-200-97-162-130.sslip.io"
 
 
 def is_wildcard_host(url: str) -> bool:
-    """Return True if URL host is local or dynamic wildcard DNS (sslip.io, nip.io)."""
+    """Return True if URL host is local or empty."""
     if not url:
         return True
     host = (urlparse(url).hostname or "").lower()
-    if not host or host in _LOCAL_HOSTS:
-        return True
-    for suffix in _WILDCARD_SUFFIXES:
-        if host == suffix or host.endswith("." + suffix):
-            return True
-    return False
+    return not host or host in _LOCAL_HOSTS
 
 
 def get_effective_tracking_url() -> str:
-    """Get the usable tracking URL if configured."""
-    return (settings.TRACKING_BASE_URL or "").strip().rstrip("/")
+    """Get the usable tracking URL if configured, falling back to hosted Dokploy backend."""
+    url = (settings.TRACKING_BASE_URL or "").strip().rstrip("/")
+    if not url or (urlparse(url).hostname or "").lower() in _LOCAL_HOSTS:
+        return DOKPLOY_PUBLIC_BACKEND
+    return url
 
 
 def tracking_url_is_public() -> bool:
-    """Check if the tracking URL points to a non-local, non-wildcard public domain."""
-    url = (settings.TRACKING_BASE_URL or "").strip().rstrip("/")
-    if not url:
-        return False
-    host = (urlparse(url).hostname or "").lower()
-    if host in _LOCAL_HOSTS:
-        return False
-    return not is_wildcard_host(url)
+    """Check if the tracking URL points to a non-local public domain or IP."""
+    effective = get_effective_tracking_url()
+    host = (urlparse(effective).hostname or "").lower()
+    return bool(host and host not in _LOCAL_HOSTS)
 
 
 def tracking_active() -> bool:
@@ -158,9 +152,7 @@ def tracking_active() -> bool:
     Whether to rewrite links and add the open pixel.
     - False if explicitly disabled in settings
     - True if explicitly enabled by user (with a configured URL)
-    - If automatic (None), ONLY True if a genuine non-wildcard public domain is configured.
-      This prevents sslip.io/wildcard domains from being injected into outgoing emails,
-      which triggers SMTP '554 5.7.1 Spam message rejected'.
+    - If automatic (None), True as long as a non-local tracking URL is available.
     """
     if settings.TRACKING_ENABLED is False:
         return False
