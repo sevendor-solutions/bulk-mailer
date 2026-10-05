@@ -9,6 +9,8 @@ def inject_tracking(html_body: str, recipient_id: int, campaign_id: int) -> str:
     Called at send-time per-recipient.
     """
     base_url = get_effective_tracking_url()
+    if not base_url:
+        return html_body
 
     # 1. Click tracking: wrap all href links
     html_body = _wrap_links(html_body, recipient_id, campaign_id, base_url)

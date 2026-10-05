@@ -195,12 +195,20 @@ class SMTPEmailSender(EmailSender):
         except Exception as e:
             return {"success": False, "error": f"Could not build message: {e}", "error_kind": "recipient"}
 
-        # A reused connection may have been dropped by the server while idle:
-        # reconnect once before treating it as a failure.
         for attempt in (1, 2):
             try:
                 client = await self._ensure_connected()
-                await client.send_message(msg, sender=from_email, recipients=[to_email])
+
+                # Determine envelope sender (MAIL FROM)
+                envelope_sender = from_email
+                if self.username and "@" in self.username:
+                    from_domain = (from_email.rsplit("@", 1)[-1] if "@" in from_email else "").lower()
+                    user_domain = self.username.rsplit("@", 1)[-1].lower()
+                    if from_domain != user_domain:
+                        # Use authenticated username as envelope sender to satisfy strict SMTP auth and SPF
+                        envelope_sender = self.username
+
+                await client.send_message(msg, sender=envelope_sender, recipients=[to_email])
                 return {"success": True, "message_id": msg["Message-ID"]}
             except aiosmtplib.SMTPServerDisconnected as e:
                 await self.close()
@@ -221,6 +229,8 @@ class SMTPEmailSender(EmailSender):
 
 def _describe(exc: Exception) -> str:
     text = str(exc).strip()
+    if "5.7.1" in text or "Spam message rejected" in text:
+        return f"{type(exc).__name__}: {text} (Rejected by SMTP server spam filter. Common causes: unverified/wildcard links like sslip.io in email, From email mismatch with SMTP account, or spam keywords.)"
     return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 

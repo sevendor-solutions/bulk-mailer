@@ -288,6 +288,14 @@ async def _send_batch(db, campaign, recipients, sender, snapshot, snapshot_attac
             subject = render_merge_fields(source_subject, merge_data, field_defaults)
             plain_body = render_merge_fields(source_plain, merge_data, field_defaults) if source_plain else None
 
+        # Ensure plain_body is present for multipart/alternative to improve spam score
+        if not plain_body and html_body:
+            try:
+                from app.services.composer.plaintext import html_to_text
+                plain_body = html_to_text(html_body)
+            except Exception:
+                pass
+
         # Add tracking pixel and link wrapping
         if use_tracking:
             from app.services.tracking_injector import inject_tracking
@@ -297,9 +305,9 @@ async def _send_batch(db, campaign, recipients, sender, snapshot, snapshot_attac
         html_body, inline_images = localize_images(html_body)
         message_attachments = list(snapshot_attachments or []) + inline_images
 
-        # Build custom headers. The unsubscribe link must be reachable by the recipient.
+        # Build custom headers. The unsubscribe link must be reachable by the recipient and tracking active.
         custom_headers = None
-        if public_links:
+        if public_links and use_tracking and settings.TRACKING_BASE_URL:
             custom_headers = {
                 "List-Unsubscribe": f"<{settings.TRACKING_BASE_URL}/unsubscribe/{recipient.id}>",
                 "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
