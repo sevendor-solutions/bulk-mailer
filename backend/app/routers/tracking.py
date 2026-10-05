@@ -87,7 +87,9 @@ async def track_open(recipient_id: str, request: Request):
 @router.get("/track/click/{recipient_id}")
 async def track_click(recipient_id: str, url: str, cid: int = None, request: Request = None):
     """Track link click and redirect to original URL."""
-    original_url = unquote(url)
+    original_url = unquote(url).strip()
+    if not (original_url.startswith("http://") or original_url.startswith("https://")):
+        original_url = "https://" + original_url
 
     try:
         async with AsyncSessionLocal() as db:
@@ -101,7 +103,7 @@ async def track_click(recipient_id: str, url: str, cid: int = None, request: Req
                 )
             recipient = result.scalar_one_or_none()
             if recipient:
-                campaign_id = recipient.campaign_id
+                campaign_id = recipient.campaign_id or cid
                 existing = await db.execute(
                     select(TrackingEvent.id).where(
                         TrackingEvent.recipient_id == recipient.id,
@@ -123,12 +125,36 @@ async def track_click(recipient_id: str, url: str, cid: int = None, request: Req
                 db.add(event)
 
                 # Update campaign click count (first click per recipient)
-                if first_click:
+                if first_click and campaign_id:
                     await db.execute(
                         update(Campaign)
                         .where(Campaign.id == campaign_id)
                         .values(clicked_count=func.coalesce(Campaign.clicked_count, 0) + 1)
                     )
+
+                # Ensure open is also recorded if images were blocked
+                if campaign_id:
+                    existing_open = await db.execute(
+                        select(TrackingEvent.id).where(
+                            TrackingEvent.recipient_id == recipient.id,
+                            TrackingEvent.event_type == "open",
+                        ).limit(1)
+                    )
+                    if existing_open.first() is None:
+                        db.add(TrackingEvent(
+                            recipient_id=recipient.id,
+                            campaign_id=campaign_id,
+                            event_type="open",
+                            metadata_json={
+                                "implied_by": "click",
+                                "ip": request.client.host if request and request.client else None,
+                            },
+                        ))
+                        await db.execute(
+                            update(Campaign)
+                            .where(Campaign.id == campaign_id)
+                            .values(opened_count=func.coalesce(Campaign.opened_count, 0) + 1)
+                        )
 
                 await db.commit()
     except Exception as exc:
