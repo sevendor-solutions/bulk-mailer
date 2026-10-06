@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update, func, or_
 from app.database import AsyncSessionLocal
@@ -317,26 +318,62 @@ async def _send_batch(db, campaign, recipients, sender, snapshot, snapshot_attac
             except Exception:
                 pass
 
-        # Add tracking pixel and default unsubscribe footer
-        if use_tracking:
-            from app.services.tracking_injector import inject_tracking
-            html_body = inject_tracking(html_body, recipient.id, campaign.id)
-        else:
-            # Even if click/open tracking is off, ensure unsubscribe link/footer is present
-            from app.services.tracking_injector import inject_unsubscribe
-            html_body = inject_unsubscribe(html_body, recipient.id, settings.TRACKING_BASE_URL)
-
-        # Unsubscribe URL for plain body and headers
-        unsub_base = (settings.TRACKING_BASE_URL or "").strip().rstrip("/")
+        # Unsubscribe and tracking logic
+        # Only inject HTTP unsubscribe/tracking URLs if genuine public non-wildcard domain is present.
+        # Injecting sslip.io/nip.io/localhost links into outgoing emails triggers SMTP '554 5.7.1 Spam message rejected'.
+        has_public_url = tracking_url_is_public()
+        unsub_base = (settings.TRACKING_BASE_URL or "").strip().rstrip("/") if has_public_url else ""
         custom_headers = None
+
         if unsub_base:
+            if use_tracking:
+                from app.services.tracking_injector import inject_tracking
+                html_body = inject_tracking(html_body, recipient.id, campaign.id)
+            else:
+                from app.services.tracking_injector import inject_unsubscribe
+                html_body = inject_unsubscribe(html_body, recipient.id, unsub_base)
+
             unsub_url = f"{unsub_base}/unsubscribe/{recipient.id}"
             if plain_body and "unsubscribe" not in plain_body.lower():
                 plain_body += f"\n\n---\nTo unsubscribe from future emails: {unsub_url}"
+
             custom_headers = {
                 "List-Unsubscribe": f"<{unsub_url}>",
                 "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
             }
+        else:
+            # Safe mailto unsubscribe when using local / wildcard domain (sslip.io)
+            # This protects against SMTP 554 5.7.1 Spam message rejected.
+            reply_addr = (campaign.reply_to or campaign.from_email or "").strip()
+            mailto_unsub = f"mailto:{reply_addr}?subject=Unsubscribe" if reply_addr else ""
+
+            if "{{unsubscribe_url}}" in html_body:
+                html_body = html_body.replace("{{unsubscribe_url}}", mailto_unsub or "#")
+
+            has_unsub = bool(
+                re.search(r'href=[\'"][^\'"]*unsubscribe[^\'"]*[\'"]', html_body, re.IGNORECASE)
+                or re.search(r'unsubscribe', html_body, re.IGNORECASE)
+            )
+            if not has_unsub and mailto_unsub:
+                footer_html = f'''
+<div style="margin-top: 32px; padding: 16px 8px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #6b7280; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+    <p style="margin: 0 0 4px 0;">You received this email because you are on our mailing list.</p>
+    <p style="margin: 0;"><a href="{mailto_unsub}" style="color: #4f46e5; text-decoration: underline;">Unsubscribe</a></p>
+</div>
+'''
+                body_pattern = re.compile(r'</body>', re.IGNORECASE)
+                if body_pattern.search(html_body):
+                    html_body = body_pattern.sub(f"{footer_html}</body>", html_body, count=1)
+                else:
+                    html_body += footer_html
+
+            if plain_body and "unsubscribe" not in plain_body.lower() and reply_addr:
+                plain_body += f"\n\n---\nTo unsubscribe: reply to this email with 'Unsubscribe' in the subject."
+
+            if mailto_unsub:
+                custom_headers = {
+                    "List-Unsubscribe": f"<{mailto_unsub}>",
+                }
 
         # Images uploaded here are stored with this machine's address
         html_body, inline_images = localize_images(html_body)

@@ -1,6 +1,6 @@
 import re
 from urllib.parse import quote
-from app.services.provider_config import get_effective_tracking_url
+from app.services.provider_config import get_effective_tracking_url, is_wildcard_host
 
 
 def inject_unsubscribe(html_body: str, recipient_id: int, base_url: str | None = None) -> str:
@@ -10,7 +10,7 @@ def inject_unsubscribe(html_body: str, recipient_id: int, base_url: str | None =
     2. If no unsubscribe link is present in the HTML, injects a clean default footer.
     """
     url = (base_url or get_effective_tracking_url() or "").strip().rstrip("/")
-    if not url:
+    if not url or is_wildcard_host(url):
         return html_body.replace("{{unsubscribe_url}}", "#")
 
     unsub_url = f"{url}/unsubscribe/{recipient_id}"
