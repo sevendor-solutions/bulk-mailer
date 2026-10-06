@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func
 from app.database import get_db
 from app.models.user import User
 from app.models.campaign import Campaign, Recipient, UploadJob, ImportMappingProfile
@@ -447,15 +447,6 @@ async def update_recipients_inclusion(
             if r.public_code and r.public_code.upper() in except_codes:
                 continue
             r.is_included = req.is_included
-            if req.is_included and r.status == "unsubscribed" and not r.sent_at:
-                r.status = "pending"
-                r.error_message = None
-                await db.execute(
-                    delete(SuppressionList).where(
-                        func.lower(SuppressionList.email) == r.email.lower(),
-                        SuppressionList.scope == "global",
-                    )
-                )
     else:
         if not req.codes:
             raise HTTPException(400, "Provide codes or set all=true")
@@ -468,15 +459,6 @@ async def update_recipients_inclusion(
         )
         for r in result.scalars().all():
             r.is_included = req.is_included
-            if req.is_included and r.status == "unsubscribed" and not r.sent_at:
-                r.status = "pending"
-                r.error_message = None
-                await db.execute(
-                    delete(SuppressionList).where(
-                        func.lower(SuppressionList.email) == r.email.lower(),
-                        SuppressionList.scope == "global",
-                    )
-                )
 
     included = await db.execute(
         select(func.count()).select_from(Recipient).where(
