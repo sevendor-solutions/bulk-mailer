@@ -452,6 +452,61 @@ async def update_data_retention(
     return config.model_dump()
 
 
+@router.get("/suppression")
+async def get_suppression_list(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """List all suppressed/unsubscribed emails."""
+    from app.models.suppression import SuppressionList
+    result = await db.execute(
+        select(SuppressionList).order_by(SuppressionList.created_at.desc())
+    )
+    items = []
+    for s in result.scalars().all():
+        items.append({
+            "id": s.id,
+            "public_code": s.public_code,
+            "email": s.email,
+            "scope": s.scope,
+            "reason": s.reason,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        })
+    return {"items": items, "total": len(items)}
+
+
+@router.delete("/suppression/{email:path}")
+async def remove_from_suppression(
+    email: str,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """Re-subscribe / remove an email from the suppression list."""
+    from app.models.suppression import SuppressionList
+    from app.models.campaign import Recipient
+    from sqlalchemy import delete, func
+    
+    email_clean = email.strip().lower()
+    await db.execute(
+        delete(SuppressionList).where(
+            func.lower(SuppressionList.email) == email_clean
+        )
+    )
+    other_recipients = (await db.execute(
+        select(Recipient).where(
+            func.lower(Recipient.email) == email_clean,
+            Recipient.status == "unsubscribed",
+            Recipient.sent_at.is_(None),
+        )
+    )).scalars().all()
+    for other in other_recipients:
+        other.status = "pending"
+        other.error_message = None
+
+    await db.commit()
+    return {"message": f"Successfully re-subscribed {email}", "email": email}
+
+
 # Generic key-value setting (must be last to avoid shadowing specific routes)
 @router.put("/{key}")
 async def update_setting(

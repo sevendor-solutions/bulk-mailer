@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update, func, or_
 from app.database import AsyncSessionLocal
 from app.models.campaign import Campaign, Recipient
+from app.models.suppression import SuppressionList
 from app.services.email_sender import get_email_sender
 from app.services.provider_config import provider_problem, tracking_active, tracking_url_is_public
 from app.services.inline_images import localize_images
@@ -254,6 +255,26 @@ async def _send_batch(db, campaign, recipients, sender, snapshot, snapshot_attac
         if campaign.status != "sending":
             return
 
+        # Re-check recipient status
+        await db.refresh(recipient)
+        if recipient.status == "unsubscribed" or not recipient.is_included:
+            logger.info(f"Skipping unsubscribed or excluded recipient: {recipient.email}")
+            continue
+
+        # Check suppression list (if recipient unsubscribed in another campaign or globally)
+        supp_check = await db.execute(
+            select(SuppressionList.id).where(
+                func.lower(SuppressionList.email) == recipient.email.lower(),
+                SuppressionList.scope == "global",
+            ).limit(1)
+        )
+        if supp_check.scalar_one_or_none():
+            recipient.status = "unsubscribed"
+            recipient.error_message = "Suppressed: recipient previously unsubscribed"
+            await db.commit()
+            logger.info(f"Skipping suppressed/unsubscribed recipient: {recipient.email}")
+            continue
+
         # Mark as sending
         recipient.status = "sending"
         await db.commit()
@@ -296,22 +317,30 @@ async def _send_batch(db, campaign, recipients, sender, snapshot, snapshot_attac
             except Exception:
                 pass
 
-        # Add tracking pixel and link wrapping
+        # Add tracking pixel and default unsubscribe footer
         if use_tracking:
             from app.services.tracking_injector import inject_tracking
             html_body = inject_tracking(html_body, recipient.id, campaign.id)
+        else:
+            # Even if click/open tracking is off, ensure unsubscribe link/footer is present
+            from app.services.tracking_injector import inject_unsubscribe
+            html_body = inject_unsubscribe(html_body, recipient.id, settings.TRACKING_BASE_URL)
+
+        # Unsubscribe URL for plain body and headers
+        unsub_base = (settings.TRACKING_BASE_URL or "").strip().rstrip("/")
+        custom_headers = None
+        if unsub_base:
+            unsub_url = f"{unsub_base}/unsubscribe/{recipient.id}"
+            if plain_body and "unsubscribe" not in plain_body.lower():
+                plain_body += f"\n\n---\nTo unsubscribe from future emails: {unsub_url}"
+            custom_headers = {
+                "List-Unsubscribe": f"<{unsub_url}>",
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            }
 
         # Images uploaded here are stored with this machine's address
         html_body, inline_images = localize_images(html_body)
         message_attachments = list(snapshot_attachments or []) + inline_images
-
-        # Build custom headers. The unsubscribe link must be reachable by the recipient and tracking active.
-        custom_headers = None
-        if public_links and use_tracking and settings.TRACKING_BASE_URL:
-            custom_headers = {
-                "List-Unsubscribe": f"<{settings.TRACKING_BASE_URL}/unsubscribe/{recipient.id}>",
-                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-            }
 
         # Send
         try:

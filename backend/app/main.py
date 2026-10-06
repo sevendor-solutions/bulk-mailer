@@ -93,7 +93,7 @@ app.add_middleware(
 )
 
 # What a recipient's mail app may need from this server
-RECIPIENT_PATHS = ("/track/", "/api/track/", "/unsubscribe/", "/api/unsubscribe/", "/uploads/")
+RECIPIENT_PATHS = ("/track/", "/api/track/", "/unsubscribe/", "/api/unsubscribe/", "/resubscribe/", "/api/resubscribe/", "/uploads/")
 
 
 @app.middleware("http")
