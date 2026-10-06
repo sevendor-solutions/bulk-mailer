@@ -138,13 +138,20 @@ async def track_click(recipient_id: str, url: str, cid: int = None, request: Req
 
 
 @router.get("/unsubscribe/{recipient_id}")
-async def unsubscribe_page(recipient_id: int):
+async def unsubscribe_page(recipient_id: str):
     """Show unsubscribe or resubscribe page based on recipient's current status."""
     recipient = None
     is_suppressed = False
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Recipient).where(Recipient.id == recipient_id))
+        if str(recipient_id).isdigit():
+            result = await db.execute(
+                select(Recipient).where(or_(Recipient.id == int(recipient_id), Recipient.public_code == str(recipient_id)))
+            )
+        else:
+            result = await db.execute(
+                select(Recipient).where(Recipient.public_code == str(recipient_id))
+            )
         recipient = result.scalar_one_or_none()
         if recipient:
             email_clean = recipient.email.strip().lower()
@@ -233,17 +240,24 @@ async def unsubscribe_page(recipient_id: int):
 
 
 @router.post("/unsubscribe/{recipient_id}")
-async def one_click_unsubscribe(recipient_id: int):
-    """One-click unsubscribe (RFC 8058): mail clients POST to the List-Unsubscribe URL."""
+async def one_click_unsubscribe(recipient_id: str):
+    """One-click unsubscribe: mail clients POST to the List-Unsubscribe URL."""
     return await confirm_unsubscribe(recipient_id)
 
 
 @router.post("/unsubscribe/{recipient_id}/confirm")
-async def confirm_unsubscribe(recipient_id: int):
+async def confirm_unsubscribe(recipient_id: str):
     """Process unsubscribe confirmation and add to global suppression list."""
     recipient_email = ""
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Recipient).where(Recipient.id == recipient_id))
+        if str(recipient_id).isdigit():
+            result = await db.execute(
+                select(Recipient).where(or_(Recipient.id == int(recipient_id), Recipient.public_code == str(recipient_id)))
+            )
+        else:
+            result = await db.execute(
+                select(Recipient).where(Recipient.public_code == str(recipient_id))
+            )
         recipient = result.scalar_one_or_none()
 
         if recipient:
@@ -324,18 +338,25 @@ async def confirm_unsubscribe(recipient_id: int):
 
 
 @router.get("/resubscribe/{recipient_id}")
-async def resubscribe_get(recipient_id: int):
+async def resubscribe_get(recipient_id: str):
     """GET endpoint to show or process resubscribe."""
     return await resubscribe_recipient(recipient_id)
 
 
 @router.post("/unsubscribe/{recipient_id}/resubscribe")
 @router.post("/resubscribe/{recipient_id}")
-async def resubscribe_recipient(recipient_id: int):
+async def resubscribe_recipient(recipient_id: str):
     """Re-subscribe recipient: removes from suppression list and restores pending status."""
     recipient_email = ""
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Recipient).where(Recipient.id == recipient_id))
+        if str(recipient_id).isdigit():
+            result = await db.execute(
+                select(Recipient).where(or_(Recipient.id == int(recipient_id), Recipient.public_code == str(recipient_id)))
+            )
+        else:
+            result = await db.execute(
+                select(Recipient).where(Recipient.public_code == str(recipient_id))
+            )
         recipient = result.scalar_one_or_none()
 
         if not recipient:

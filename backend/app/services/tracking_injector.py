@@ -1,16 +1,16 @@
 import re
 from urllib.parse import quote
-from app.services.provider_config import get_effective_tracking_url, is_wildcard_host
+from app.services.provider_config import get_effective_tracking_url, get_unsubscribe_base_url
 
 
-def inject_unsubscribe(html_body: str, recipient_id: int, base_url: str | None = None) -> str:
+def inject_unsubscribe(html_body: str, recipient_id: int | str, base_url: str | None = None) -> str:
     """
     Ensure the email contains an unsubscribe link.
     1. Replaces {{unsubscribe_url}} placeholder with the actual unsubscribe URL.
     2. If no unsubscribe link is present in the HTML, injects a clean default footer.
     """
-    url = (base_url or get_effective_tracking_url() or "").strip().rstrip("/")
-    if not url or is_wildcard_host(url):
+    url = (base_url or get_unsubscribe_base_url() or "").strip().rstrip("/")
+    if not url:
         return html_body.replace("{{unsubscribe_url}}", "#")
 
     unsub_url = f"{url}/unsubscribe/{recipient_id}"

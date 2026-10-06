@@ -142,6 +142,21 @@ def get_effective_tracking_url() -> str:
     return (settings.TRACKING_BASE_URL or "").strip().rstrip("/")
 
 
+def get_unsubscribe_base_url() -> str:
+    """
+    Get the base URL for web-based unsubscribe links.
+    Returns TRACKING_BASE_URL as long as it has a configured hostname that is not a local loopback.
+    Works for custom domains as well as public cloud hosts (e.g. sslip.io).
+    """
+    url = (settings.TRACKING_BASE_URL or "").strip().rstrip("/")
+    if not url:
+        return ""
+    host = (urlparse(url).hostname or "").lower()
+    if not host or host in _LOCAL_HOSTS:
+        return ""
+    return url
+
+
 def tracking_url_is_public() -> bool:
     """Check if the tracking URL points to a non-local, non-wildcard public domain."""
     url = (settings.TRACKING_BASE_URL or "").strip().rstrip("/")

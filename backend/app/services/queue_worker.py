@@ -319,10 +319,10 @@ async def _send_batch(db, campaign, recipients, sender, snapshot, snapshot_attac
                 pass
 
         # Unsubscribe and tracking logic
-        # Only inject HTTP unsubscribe/tracking URLs if genuine public non-wildcard domain is present.
-        # Injecting sslip.io/nip.io/localhost links into outgoing emails triggers SMTP '554 5.7.1 Spam message rejected'.
-        has_public_url = tracking_url_is_public()
-        unsub_base = (settings.TRACKING_BASE_URL or "").strip().rstrip("/") if has_public_url else ""
+        from app.services.provider_config import get_unsubscribe_base_url
+        unsub_base = get_unsubscribe_base_url()
+        reply_addr = (campaign.reply_to or campaign.from_email or "").strip()
+        mailto_unsub = f"mailto:{reply_addr}?subject=Unsubscribe" if reply_addr else ""
         custom_headers = None
 
         if unsub_base:
@@ -337,10 +337,15 @@ async def _send_batch(db, campaign, recipients, sender, snapshot, snapshot_attac
             if plain_body and "unsubscribe" not in plain_body.lower():
                 plain_body += f"\n\n---\nTo unsubscribe from future emails: {unsub_url}"
 
-            custom_headers = {
-                "List-Unsubscribe": f"<{unsub_url}>",
-                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-            }
+            # Standard RFC 2369 List-Unsubscribe header
+            if mailto_unsub:
+                custom_headers = {
+                    "List-Unsubscribe": f"<{unsub_url}>, <{mailto_unsub}>",
+                }
+            else:
+                custom_headers = {
+                    "List-Unsubscribe": f"<{unsub_url}>",
+                }
         else:
             # Safe mailto unsubscribe when using local / wildcard domain (sslip.io)
             # This protects against SMTP 554 5.7.1 Spam message rejected.
