@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, update, func, or_
 from app.database import AsyncSessionLocal
 from app.models.campaign import Campaign, Recipient
+from app.models.suppression import SuppressionList
 from app.services.email_sender import get_email_sender
 from app.services.provider_config import provider_problem, tracking_active, tracking_url_is_public
 from app.services.inline_images import localize_images
@@ -243,6 +244,21 @@ async def _send_batch(db, campaign, recipients, sender, snapshot, snapshot_attac
         await db.refresh(campaign)
         if campaign.status != "sending":
             return
+
+        # Do not send to unsubscribed or suppressed recipients
+        if recipient.status == "unsubscribed":
+            continue
+
+        supp_check = await db.execute(
+            select(SuppressionList.id).where(
+                func.lower(SuppressionList.email) == recipient.email.lower()
+            ).limit(1)
+        )
+        if supp_check.scalar_one_or_none():
+            recipient.status = "unsubscribed"
+            recipient.error_message = "Suppressed: recipient previously unsubscribed"
+            await db.commit()
+            continue
 
         # Rate limit (respects delay or tokens/sec)
         acquired = await rate_limiter.acquire(is_cancelled=lambda: _shutdown_event.is_set())

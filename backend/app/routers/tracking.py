@@ -2,7 +2,7 @@ import logging
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func, or_
+from sqlalchemy import select, update, delete, func, or_
 from urllib.parse import unquote
 from app.database import get_db, AsyncSessionLocal
 from app.models.campaign import Recipient, Campaign
@@ -217,19 +217,67 @@ async def confirm_unsubscribe(recipient_id: int):
 
             await db.commit()
 
-    html = """
+    html = f"""
     <!DOCTYPE html>
     <html>
     <head><title>Unsubscribed</title>
     <style>
-        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
-        .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; }
+        body {{ font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }}
+        .card {{ background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }}
+        button {{ background: #10b981; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; }}
+        button:hover {{ background: #059669; }}
     </style>
     </head>
     <body>
         <div class="card">
             <h2>✓ Unsubscribed</h2>
             <p>You have been successfully unsubscribed. You will no longer receive emails from us.</p>
+            <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #eee;">
+                <p style="font-size: 13px; color: #666; margin-bottom: 12px;">Unsubscribed by mistake?</p>
+                <form method="POST" action="/unsubscribe/{recipient_id}/resubscribe">
+                    <button type="submit">Re-subscribe</button>
+                </form>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@router.api_route("/unsubscribe/{recipient_id}/resubscribe", methods=["GET", "POST"])
+async def resubscribe(recipient_id: int):
+    """Process re-subscription: removes email from suppression list."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Recipient).where(Recipient.id == recipient_id))
+        recipient = result.scalar_one_or_none()
+        if recipient:
+            if recipient.status == "unsubscribed":
+                recipient.status = "sent"
+
+            # Remove from global suppression list
+            await db.execute(
+                delete(SuppressionList).where(
+                    func.lower(SuppressionList.email) == recipient.email.lower(),
+                    SuppressionList.scope == "global",
+                )
+            )
+            await db.commit()
+
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Subscribed</title>
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
+        .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
+        h2 { color: #10b981; }
+    </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>✓ Subscribed</h2>
+            <p>You have been successfully re-subscribed. You will continue to receive updates from us.</p>
         </div>
     </body>
     </html>
