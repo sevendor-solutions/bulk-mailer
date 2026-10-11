@@ -143,31 +143,22 @@ def get_effective_tracking_url() -> str:
 
 
 def tracking_url_is_public() -> bool:
-    """Check if the tracking URL points to a non-local, non-wildcard public domain."""
+    """Check if the tracking URL points to a non-local address."""
     url = (settings.TRACKING_BASE_URL or "").strip().rstrip("/")
     if not url:
         return False
     host = (urlparse(url).hostname or "").lower()
-    if host in _LOCAL_HOSTS:
-        return False
-    return not is_wildcard_host(url)
+    return bool(host and host not in _LOCAL_HOSTS)
 
 
 def tracking_active() -> bool:
     """
     Whether to rewrite links and add the open pixel.
     - False if explicitly disabled in settings
-    - True if explicitly enabled by user (with a configured URL)
-    - If automatic (None), ONLY True if a genuine non-wildcard public domain is configured.
-      This prevents sslip.io/wildcard domains from being injected into outgoing emails,
-      which triggers SMTP '554 5.7.1 Spam message rejected'.
+    - True whenever a non-local tracking URL is configured.
     """
     if settings.TRACKING_ENABLED is False:
         return False
-    if settings.TRACKING_ENABLED is True:
-        url = (settings.TRACKING_BASE_URL or "").strip()
-        host = (urlparse(url).hostname or "").lower()
-        return bool(url and host not in _LOCAL_HOSTS)
     return tracking_url_is_public()
 
 
