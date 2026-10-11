@@ -8,6 +8,9 @@ const getApiBase = () => {
   }
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
+    if (host.includes('ysrcptechforce.com')) {
+      return `${window.location.protocol}//api.ysrcptechforce.com/api`;
+    }
     if (host.includes('200-97-162-130') || host.includes('200.97.162.130') || host.includes('sslip.io')) {
       return `${window.location.protocol}//bulkmailer-backend-z9iqeh-d78262-200-97-162-130.sslip.io/api`;
     }
