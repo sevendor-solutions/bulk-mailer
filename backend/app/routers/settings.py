@@ -452,6 +452,90 @@ async def update_data_retention(
     return config.model_dump()
 
 
+from app.models.suppression import SuppressionList
+
+class UnsuppressRequest(BaseModel):
+    email: str
+
+@router.get("/suppression-list")
+async def get_suppression_list(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """List all suppressed / unsubscribed emails."""
+    result = await db.execute(select(SuppressionList).order_by(SuppressionList.created_at.desc()))
+    items = result.scalars().all()
+    return [
+        {
+            "id": s.id,
+            "public_code": s.public_code,
+            "email": s.email,
+            "scope": s.scope,
+            "reason": s.reason,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in items
+    ]
+
+@router.post("/suppression-list/unsuppress")
+async def unsuppress_email(
+    req: UnsuppressRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """Remove an email from the suppression list (admin only)."""
+    from sqlalchemy import func
+    target = req.email.strip().lower()
+    await db.execute(
+        delete(SuppressionList).where(
+            func.lower(SuppressionList.email) == target
+        )
+    )
+    await db.commit()
+    return {"status": "ok", "message": f"Email {target} has been unsuppressed."}
+
+class AddSuppressionRequest(BaseModel):
+    email: str
+    reason: Optional[str] = "manual"
+
+@router.post("/suppression-list")
+async def add_to_suppression_list(
+    req: AddSuppressionRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    from app.services.public_codes import generate_unique_public_code, PREFIXES
+    from sqlalchemy import func
+    target = req.email.strip().lower()
+    existing = await db.execute(select(SuppressionList).where(func.lower(SuppressionList.email) == target))
+    if not existing.scalar_one_or_none():
+        db.add(SuppressionList(
+            public_code=await generate_unique_public_code(db, SuppressionList, PREFIXES["suppression"]),
+            email=target,
+            scope="global",
+            reason=req.reason or "manual",
+        ))
+        await db.commit()
+    return {"status": "ok", "email": target}
+
+@router.delete("/suppression-list/{email:path}")
+async def delete_suppression(
+    email: str,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    from urllib.parse import unquote
+    from sqlalchemy import func
+    target = unquote(email).strip().lower()
+    await db.execute(
+        delete(SuppressionList).where(
+            func.lower(SuppressionList.email) == target
+        )
+    )
+    await db.commit()
+    return {"status": "ok", "message": f"Email {target} removed from suppression list."}
+
+
 # Generic key-value setting (must be last to avoid shadowing specific routes)
 @router.put("/{key}")
 async def update_setting(

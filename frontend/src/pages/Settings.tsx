@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import {
   Save, Server, Mail, Gauge, UserCircle, Plus, Pencil, Trash2, Star,
   ToggleLeft, ToggleRight, X, Loader2, Globe, Upload, Sliders, Shield,
+  Search, RotateCcw,
 } from 'lucide-react';
 import ConfirmDialog from '../components/ConfirmDialog';
 import type { SenderIdentity } from '../types';
@@ -21,7 +22,7 @@ import StickyActionBar from '../components/ui/StickyActionBar';
 import Switch from '../components/ui/Switch';
 import { assetUrl } from '../constants/assets';
 
-type Tab = 'general' | 'identities' | 'campaign-controls' | 'provider';
+type Tab = 'general' | 'identities' | 'campaign-controls' | 'provider' | 'suppression';
 
 interface DataRetentionConfig {
   enabled: boolean;
@@ -108,7 +109,7 @@ export default function Settings() {
   const [allowScheduling, setAllowScheduling] = useState(true);
   const [savingCampaignControls, setSavingCampaignControls] = useState(false);
 
-  useEffect(() => { loadSettings(); loadIdentities(); loadGeneralSettings(); loadCampaignControls(); loadRetentionSettings(); }, []);
+  useEffect(() => { loadSettings(); loadIdentities(); loadGeneralSettings(); loadCampaignControls(); loadRetentionSettings(); loadSuppressionList(); }, []);
 
   const loadGeneralSettings = async () => {
     try {
@@ -209,6 +210,50 @@ export default function Settings() {
       const res = await api.get('/settings/data-retention');
       setRetention(res.data);
     } catch { /* defaults */ }
+  };
+
+  const [suppressionList, setSuppressionList] = useState<{ id: number; public_code: string; email: string; scope: string; reason: string; created_at: string }[]>([]);
+  const [loadingSuppression, setLoadingSuppression] = useState(false);
+  const [suppressionSearch, setSuppressionSearch] = useState('');
+  const [newSuppressionEmail, setNewSuppressionEmail] = useState('');
+  const [addingSuppression, setAddingSuppression] = useState(false);
+
+  const loadSuppressionList = async () => {
+    setLoadingSuppression(true);
+    try {
+      const res = await api.get('/settings/suppression-list');
+      setSuppressionList(res.data || []);
+    } catch {
+      /* ignore */
+    } finally {
+      setLoadingSuppression(false);
+    }
+  };
+
+  const handleUnsuppress = async (email: string) => {
+    try {
+      await api.post('/settings/suppression-list/unsuppress', { email });
+      toast.success(`Re-subscribed ${email}`);
+      setSuppressionList(prev => prev.filter(item => item.email.toLowerCase() !== email.toLowerCase()));
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to unsuppress');
+    }
+  };
+
+  const handleAddSuppression = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSuppressionEmail.trim()) return;
+    setAddingSuppression(true);
+    try {
+      await api.post('/settings/suppression-list', { email: newSuppressionEmail.trim(), reason: 'manual' });
+      toast.success(`Added ${newSuppressionEmail} to suppression list`);
+      setNewSuppressionEmail('');
+      loadSuppressionList();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to add');
+    } finally {
+      setAddingSuppression(false);
+    }
   };
 
   const saveProvider = async (): Promise<boolean> => {
@@ -362,6 +407,7 @@ export default function Settings() {
     { key: 'identities', label: 'Sender Identities', icon: UserCircle },
     { key: 'campaign-controls', label: 'Campaign Controls', icon: Sliders },
     { key: 'provider', label: 'Email Provider', icon: Mail },
+    { key: 'suppression', label: 'Suppression List', icon: Shield },
   ];
 
   return (
@@ -1165,9 +1211,122 @@ export default function Settings() {
 
           </motion.div>
         )}
+
+        {/* ─── SUPPRESSION LIST ─── */}
+        {tab === 'suppression' && (
+          <motion.div
+            key="suppression"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.15 }}
+            className="space-y-6"
+          >
+            <div className="card-static p-6 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h3 className="section-title">Suppression & Unsubscribed List</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Emails on this list are automatically excluded from campaigns to prevent sending to unsubscribed contacts. You can re-subscribe any email here.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadSuppressionList}
+                  disabled={loadingSuppression}
+                  className="btn-secondary btn-sm"
+                >
+                  <RotateCcw size={14} className={loadingSuppression ? 'animate-spin' : ''} />
+                  Refresh
+                </button>
+              </div>
+
+              {/* Add email manually */}
+              <form onSubmit={handleAddSuppression} className="flex flex-wrap items-center gap-3 pt-2">
+                <input
+                  type="email"
+                  value={newSuppressionEmail}
+                  onChange={e => setNewSuppressionEmail(e.target.value)}
+                  placeholder="Add email to suppress (e.g. user@example.com)..."
+                  className="input-field flex-1 max-w-md text-sm"
+                  required
+                />
+                <button type="submit" disabled={addingSuppression} className="btn-secondary btn-sm">
+                  {addingSuppression ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  Block Email
+                </button>
+              </form>
+
+              {/* Search */}
+              <div className="relative max-w-md pt-2">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={suppressionSearch}
+                  onChange={e => setSuppressionSearch(e.target.value)}
+                  placeholder="Filter suppressed emails..."
+                  className="input-field pl-9 text-sm"
+                />
+              </div>
+
+              {/* Table */}
+              {loadingSuppression ? (
+                <div className="flex items-center justify-center py-12 text-gray-400">
+                  <Loader2 size={24} className="animate-spin mr-2" />
+                  Loading suppression list...
+                </div>
+              ) : suppressionList.length === 0 ? (
+                <div className="text-center py-12 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+                  <Shield size={36} className="mx-auto text-emerald-500 mb-2 opacity-80" />
+                  <p className="text-sm font-medium text-gray-700">Suppression list is empty</p>
+                  <p className="text-xs text-gray-500 mt-1">No emails are currently unsubscribed or blocked.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-gray-100">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-gray-50 text-xs font-semibold text-gray-500 uppercase">
+                      <tr>
+                        <th className="px-4 py-3">Email Address</th>
+                        <th className="px-4 py-3">Reason</th>
+                        <th className="px-4 py-3">Date Unsubscribed</th>
+                        <th className="px-4 py-3 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {suppressionList
+                        .filter(item => item.email.toLowerCase().includes(suppressionSearch.toLowerCase()))
+                        .map(item => (
+                          <tr key={item.id} className="hover:bg-gray-50/60 transition-colors">
+                            <td className="px-4 py-3 font-medium text-gray-900">{item.email}</td>
+                            <td className="px-4 py-3">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 capitalize">
+                                {item.reason || 'unsubscribe'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-gray-500 text-xs">
+                              {item.created_at ? new Date(item.created_at).toLocaleString() : '—'}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleUnsuppress(item.email)}
+                                className="btn-secondary btn-sm text-emerald-600 hover:text-emerald-700 hover:border-emerald-200"
+                              >
+                                Re-subscribe
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
-      {tab !== 'identities' && (
+      {tab !== 'identities' && tab !== 'suppression' && (
         <div className="pt-2">
           <StickyActionBar
             sticky

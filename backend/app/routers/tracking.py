@@ -234,7 +234,8 @@ async def confirm_unsubscribe(recipient_id: int):
             <p>You have been successfully unsubscribed. You will no longer receive emails from us.</p>
             <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #eee;">
                 <p style="font-size: 13px; color: #666; margin-bottom: 12px;">Unsubscribed by mistake?</p>
-                <form method="POST" action="/unsubscribe/{recipient_id}/resubscribe">
+                <form method="POST" action="/unsubscribe/{recipient_id}/resubscribe?email={recipient.email if recipient else ''}">
+                    <input type="hidden" name="email" value="{recipient.email if recipient else ''}">
                     <button type="submit">Re-subscribe</button>
                 </form>
             </div>
@@ -246,20 +247,38 @@ async def confirm_unsubscribe(recipient_id: int):
 
 
 @router.api_route("/unsubscribe/{recipient_id}/resubscribe", methods=["GET", "POST"])
-async def resubscribe(recipient_id: int):
+async def resubscribe(recipient_id: str, email: str = None, request: Request = None):
     """Process re-subscription: removes email from suppression list."""
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Recipient).where(Recipient.id == recipient_id))
-        recipient = result.scalar_one_or_none()
-        if recipient:
-            if recipient.status == "unsubscribed":
-                recipient.status = "sent"
+        target_email = (email or "").strip().lower()
 
-            # Remove from global suppression list
+        # Try to parse form if POST
+        if not target_email and request and request.method == "POST":
+            try:
+                form = await request.form()
+                target_email = (form.get("email") or "").strip().lower()
+            except Exception:
+                pass
+
+        recipient = None
+        if str(recipient_id).isdigit():
+            result = await db.execute(select(Recipient).where(or_(Recipient.id == int(recipient_id), Recipient.public_code == str(recipient_id))))
+            recipient = result.scalar_one_or_none()
+        elif str(recipient_id).startswith("RCP-"):
+            result = await db.execute(select(Recipient).where(Recipient.public_code == str(recipient_id)))
+            recipient = result.scalar_one_or_none()
+        elif "@" in str(recipient_id):
+            target_email = str(recipient_id).strip().lower()
+
+        if recipient:
+            recipient.status = "sent"
+            if not target_email:
+                target_email = recipient.email.strip().lower()
+
+        if target_email:
             await db.execute(
                 delete(SuppressionList).where(
-                    func.lower(SuppressionList.email) == recipient.email.lower(),
-                    SuppressionList.scope == "global",
+                    func.lower(SuppressionList.email) == target_email
                 )
             )
             await db.commit()
