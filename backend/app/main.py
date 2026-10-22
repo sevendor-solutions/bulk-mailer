@@ -82,11 +82,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS
+# CORS: Strip wildcard '*' from allow_origins if present.
+# Under W3C CORS specifications, browsers strictly reject responses with
+# 'Access-Control-Allow-Origin: *' when credentials mode is 'include'.
+# By excluding '*', Starlette dynamically reflects the exact requesting origin
+# (e.g. 'https://mail.ysrcptechforce.com') which browsers accept with credentials.
+_raw_cors = settings.CORS_ORIGINS or []
+_cors_origins = [o for o in _raw_cors if o and o != "*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS or [],
-    allow_origin_regex=r".*",
+    allow_origins=_cors_origins,
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

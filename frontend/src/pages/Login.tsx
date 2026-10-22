@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
-import { ArrowRight, Loader2, Eye, EyeOff } from 'lucide-react';
+import { ArrowRight, Loader2 } from 'lucide-react';
 import { useThemeStore } from '../store/themeStore';
 import { assetUrl } from '../constants/assets';
 
@@ -13,7 +13,6 @@ export default function Login() {
   const logoUrl = useThemeStore(s => s.logoUrl);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const setAuth = useAuthStore((s) => s.setAuth);
@@ -95,26 +94,16 @@ export default function Login() {
             </div>
             <div>
               <label htmlFor="login-password" className="block text-xs font-medium text-brand-200/80 mb-1.5 ml-1">Password</label>
-              <div className="relative">
-                <input
-                  id="login-password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 bg-white/[0.06] border border-white/[0.12] rounded-xl text-white placeholder-brand-300/50 focus:outline-none focus:ring-2 focus:ring-brand-400/60 focus:border-brand-400/60 focus:bg-white/[0.08] transition-all duration-200 pr-11"
-                  placeholder="••••••••"
-                  required
-                  autoComplete="current-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-300/60 hover:text-white transition-colors p-1"
-                  title={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
+              <input
+                id="login-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 bg-white/[0.06] border border-white/[0.12] rounded-xl text-white placeholder-brand-300/50 focus:outline-none focus:ring-2 focus:ring-brand-400/60 focus:border-brand-400/60 focus:bg-white/[0.08] transition-all duration-200"
+                placeholder="••••••••"
+                required
+                autoComplete="current-password"
+              />
             </div>
             <button
               type="submit"
